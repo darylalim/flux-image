@@ -35,7 +35,7 @@ Changelog = "https://github.com/darylalim/flux-image/releases"
 # PEP 440 comma range, and would silently fall back to latest. Bump this and
 # re-run `uv lock` together.
 [tool.uv]
-required-version = "==0.12.18"
+required-version = "==0.13.4"
 
 [dependency-groups]
 dev = [

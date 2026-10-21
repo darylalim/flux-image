@@ -148,7 +148,7 @@ jobs:
           # repo's "Latest". Matching a hyphen would be wrong: this version came
           # from pyproject.toml, and uv writes PEP 440's canonical spelling —
           # `uv version 0.9.0-rc1` stores `0.9.0rc1`, hyphen stripped (verified
-          # on the pinned uv 0.12.18). So the test is "anything that is not
+          # on the pinned uv 0.13.4). So the test is "anything that is not
           # purely digits and dots", which catches 0.9.0rc1 / 1.0.0a2 /
           # 0.8.0.dev1 / 0.8.0-rc1 alike. It also catches a .postN, which is
           # deliberate slack: a post-release simply doesn't become Latest.
