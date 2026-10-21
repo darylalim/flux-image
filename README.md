@@ -1,8 +1,8 @@
 # FLUX.2 Klein Studio
 
-[![CI](https://github.com/darylalim/flux2-klein-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/flux2-klein-studio/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/darylalim/flux2-klein-studio)](https://github.com/darylalim/flux2-klein-studio/releases)
-[![License](https://img.shields.io/github/license/darylalim/flux2-klein-studio)](LICENSE)
+[![CI](https://github.com/darylalim/flux-image/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/flux-image/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/darylalim/flux-image)](https://github.com/darylalim/flux-image/releases)
+[![License](https://img.shields.io/github/license/darylalim/flux-image)](LICENSE)
 
 Streamlit application for generating and editing images using Black Forest Labs [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) on Apple Silicon with MLX, running the [8-bit quantized distilled 4B](https://huggingface.co/mlx-community/flux2-klein-4b-8bit) weights.
 
@@ -91,7 +91,7 @@ uv run pytest -m smoke   # Real model load + generation
 
 ### Releases
 
-Bump `version` in `pyproject.toml` and push to `main`. That is the whole ritual — `uv version --bump patch` does the bump and re-locks in one step, and [CI](.github/workflows/ci.yml)'s `release` job takes it from there: it runs only after all four gates pass, and publishes a [GitHub release](https://github.com/darylalim/flux2-klein-studio/releases) with auto-generated notes, tagging the exact commit that passed. It fires only when the declared version has no matching tag yet, so re-runs and unrelated pushes are no-ops, and a pull request never publishes.
+Bump `version` in `pyproject.toml` and push to `main`. That is the whole ritual — `uv version --bump patch` does the bump and re-locks in one step, and [CI](.github/workflows/ci.yml)'s `release` job takes it from there: it runs only after all four gates pass, and publishes a [GitHub release](https://github.com/darylalim/flux-image/releases) with auto-generated notes, tagging the exact commit that passed. It fires only when the declared version has no matching tag yet, so re-runs and unrelated pushes are no-ops, and a pull request never publishes.
 
 Two details are load-bearing. Because the job declares `needs: ci`, a commit that fails any gate cannot ship — the tag-triggered workflow this replaced had no way to know, and two of the first three releases published before their own CI run had finished. And the tag and the release are created by a single `gh release create --target` call rather than pushed separately: a ref pushed with the default `GITHUB_TOKEN` starts no workflow run, so splitting them would produce a tag, no release, and a green build. `tests/test_ci.py` locks both, and a cross-workflow guard (`tests/test_workflows.py`) fails the build if any workflow's `run:` script interpolates a `${{ }}` expression directly — the GitHub Actions command-injection vector — or pushes a git ref.
 

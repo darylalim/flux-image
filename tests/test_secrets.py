@@ -157,7 +157,7 @@ class TestSecretDetector:
         # kwarg, a test name) must not trip the guard, or it cries wolf.
         benign = (
             b"https://huggingface.co/black-forest-labs/FLUX.2-klein-4B",
-            b"https://github.com/darylalim/flux2-klein-studio",
+            b"https://github.com/darylalim/flux-image",
             b"max_tokens=256",
             b"test_extracts_and_strips_output",
         )
