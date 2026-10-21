@@ -508,7 +508,7 @@ wheels = [
 ]
 
 [[package]]
-name = "flux2-klein-studio"
+name = "flux-image"
 version = "0.9.0"
 source = { virtual = "." }
 dependencies = [

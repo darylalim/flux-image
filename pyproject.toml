@@ -1,5 +1,5 @@
 [project]
-name = "flux2-klein-studio"
+name = "flux-image"
 version = "0.9.0"
 description = "Streamlit application for generating and editing images using Black Forest Labs FLUX.2 Klein on Apple Silicon with MLX."
 license = "MIT"
@@ -22,9 +22,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/darylalim/flux2-klein-studio"
-Repository = "https://github.com/darylalim/flux2-klein-studio"
-Changelog = "https://github.com/darylalim/flux2-klein-studio/releases"
+Homepage = "https://github.com/darylalim/flux-image"
+Repository = "https://github.com/darylalim/flux-image"
+Changelog = "https://github.com/darylalim/flux-image/releases"
 
 # Pin the uv that writes and validates uv.lock. Without this, CI's
 # astral-sh/setup-uv installs whatever uv is latest, and a uv whose marker
