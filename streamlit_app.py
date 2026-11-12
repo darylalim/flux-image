@@ -256,9 +256,10 @@ def upsample_prompt(prompt, image_list: list | None = None):
             return prompt
         # Decode the ids rather than read result.text. Qwen3-VL is
         # grounding-trained, and mlx-vlm's skip_special_tokens skips only
-        # tokenizer.all_special_ids -- just <|im_end|> and <|endoftext|> here
-        # -- so <|box_start|>-style markers would reach FLUX verbatim. The
-        # tokenizer's own skip covers all 14 of its special tokens.
+        # tokenizer.all_special_ids. Before transformers 5.18 that was just
+        # <|im_end|> and <|endoftext|> here, so <|box_start|>-style markers
+        # reached FLUX verbatim; nothing floors transformers, so keep it.
+        # The tokenizer's own skip covers all 14 of its special tokens.
         enhanced = processor.tokenizer.decode(
             result.token_ids, skip_special_tokens=True
         ).strip()

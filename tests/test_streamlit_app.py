@@ -102,16 +102,18 @@ _APP_PATH = _REPO_ROOT / "streamlit_app.py"
 # of a UI component (success criterion 1.4.11).
 _WCAG_AA_TEXT = 4.5
 _WCAG_AA_NON_TEXT = 3.0
-# Streamlit 1.64 draws a whole st.caption block at this opacity, so a caption
-# link's rendered color is a blend with the surface under it.
+# Streamlit (1.64 through 1.67, measured) draws a whole st.caption block at
+# this opacity, so a caption link's rendered color is a blend with the surface
+# under it.
 _CAPTION_OPACITY = 0.6
-# Streamlit 1.64's stock dark (fill, text) per alert hue -- `Et` in
-# static/js/utils.*.js, the fill being the hue at 20% alpha. An alert key
-# [theme.dark] leaves unset falls back to these.
+# Streamlit 1.67's stock dark (fill, text) per alert hue -- `Ot` in
+# static/js/utils.*.js. An alert key [theme.dark] leaves unset falls back to
+# these. 1.67's redesigned palette made the fills opaque; 1.64's were the hue
+# at 20% alpha (red #FF6C6C33 under #FF6C6C).
 _STOCK_DARK_ALERTS = {
-    "red": ("#FF6C6C33", "#FF6C6C"),
-    "yellow": ("#FFFF1233", "#FFFFC2"),
-    "blue": ("#3D9DF333", "#3D9DF3"),
+    "red": ("#412023", "#F2919A"),
+    "yellow": ("#302917", "#FBD54F"),
+    "blue": ("#1E2A3D", "#85B8F8"),
 }
 # The alerts the app draws, and where: notices.error (red), notices.warning and
 # upsample_prompt's warning (yellow) and the enhanced-prompt banner (blue) in
@@ -251,17 +253,19 @@ class TestThemeConfig:
     neither table and cost the Light/Dark/System switcher outright). Contrast:
     the palette is this repo's own now, so WCAG AA is too.
 
-    The contrast tests model these Streamlit 1.64 frontend behaviors, to be
-    re-checked on an upgrade: the sidebar inherits every dark key it does not
-    override, its background falling back to secondaryBackgroundColor; the
-    primary button's label is white; the prompt field and the progress track
-    are secondaryBackgroundColor, the progress fill primaryColor; links are
+    The contrast tests model these Streamlit frontend behaviors, last
+    re-checked in the browser on 1.67.0 (re-check them on an upgrade): the
+    sidebar inherits every dark key it does not override, its background
+    falling back to secondaryBackgroundColor; the primary button's label is
+    white; the prompt field and the progress track are
+    secondaryBackgroundColor, the progress fill primaryColor; links are
     linkColor, else blueTextColor; st.caption draws at 0.6 opacity; and
-    st.error/warning/info draw red/yellow/blue *BackgroundColor (translucent)
-    under *TextColor, falling back to _STOCK_DARK_ALERTS. Scope: this reads the
-    committed file, so it cannot see a theme injected at runtime
-    (STREAMLIT_THEME_*, ~/.streamlit), nor the one light-mode cost a custom
-    theme carries (the Run progress bar turns primary red; see config.toml).
+    st.error/warning/info draw red/yellow/blue *BackgroundColor (translucent
+    in this config, opaque in 1.67's stock) under *TextColor, falling back to
+    _STOCK_DARK_ALERTS. Scope: this reads the committed file, so it cannot see
+    a theme injected at runtime (STREAMLIT_THEME_*, ~/.streamlit), nor the one
+    light-mode cost a custom theme carries (the Run progress bar turns the
+    stock light primary instead of stock's blue; see CLAUDE.md).
     """
 
     def test_only_the_dark_tables_are_declared(self):
@@ -311,7 +315,7 @@ class TestThemeConfig:
 
     def test_run_button_meets_wcag_aa(self):
         # Streamlit draws the primary button's label white on primaryColor --
-        # stock #FF4B4B gave 3.30:1. The button must also stand out from the
+        # 1.64's stock #FF4B4B gave 3.30:1. The button must also stand out from the
         # page, and as the prompt field's focus border and the progress fill
         # it sits on secondaryBackgroundColor.
         dark, _ = _load_dark_theme()
@@ -335,7 +339,7 @@ class TestThemeConfig:
     def test_caption_links_meet_wcag_aa_through_the_caption_opacity(self):
         # The app's only links are in the sidebar's model caption. Unset, a
         # link is the theme's blueTextColor, which measured 2.77:1 through the
-        # caption's opacity on stock dark.
+        # caption's opacity on 1.64's stock dark.
         dark, sidebar = _load_dark_theme()
         link = sidebar.get("linkColor", dark.get("linkColor"))
         assert link is not None, "linkColor unset: links fall back to blueTextColor"
@@ -346,9 +350,10 @@ class TestThemeConfig:
 
     def test_alert_text_contrast_meets_wcag_aa(self):
         # Every alert the app draws, on each surface it draws on, whether or
-        # not the config restyles its hue: an unset key is stock, and stock red
-        # measures 4.40:1 on a #1E1E1E page. Alert fills are translucent, so
-        # the text is measured against the fill composited onto the surface.
+        # not the config restyles its hue: an unset key is stock (1.64's stock
+        # red measured 4.40:1 on a #1E1E1E page; 1.67's is 6.38:1). A fill may
+        # be translucent, so the text is measured against the fill composited
+        # onto the surface.
         dark, sidebar = _load_dark_theme()
         surfaces = {
             "page": dark["backgroundColor"],
@@ -1922,7 +1927,7 @@ class TestUIWidgets:
         mock_model.generate_image.side_effect = RuntimeError("backend exploded")
         with _patched_models(mock_model, mock_model) as (app, _generate):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             # A generation failure is surfaced, not raised as an uncaught crash.
             assert not at.exception
@@ -1973,12 +1978,12 @@ class TestUIWidgets:
             at = app.run(timeout=10)
             # The placeholder shows before any run.
             assert any("appear here" in m.value for m in at.markdown)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             # Disable randomize + fix the seed for a deterministic caption.
             next(t for t in at.toggle if t.label == "Randomize seed").set_value(
                 False
             ).run(timeout=10)
             at.number_input[0].set_value(123).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             assert at.session_state["result_image"] is not None
@@ -2008,8 +2013,8 @@ class TestUIWidgets:
             mock_generate,
         ):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             # The enhanced prompt reaches the model and the banner shows it.
             assert (
@@ -2032,7 +2037,7 @@ class TestUIWidgets:
                 (f"p{i}", ()): f"e{i}" for i in range(32)
             }
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
-            at.text_input(key="prompt_input").set_value("fresh prompt").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("fresh prompt")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             cache = at.session_state["_enhance_cache"]
             assert len(cache) == 32  # stays bounded
@@ -2154,7 +2159,7 @@ class TestUIWidgets:
             at = app.run(timeout=10)
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert any("Enter a prompt" in w.value for w in at.main.warning)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert any("failed" in e.value.lower() for e in at.main.error)
             assert len(at.sidebar.error) == 0
@@ -2170,8 +2175,8 @@ class TestUIWidgets:
         with _patched_models(mock_model, mock_model) as (app, vlm_generate):
             vlm_generate.side_effect = RuntimeError("vlm down")
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             assert any("Prompt enhancement failed" in w.value for w in at.main.warning)
@@ -2187,12 +2192,12 @@ class TestUIWidgets:
             _generate,
         ):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert any("ENHANCED a cat" in i.value for i in at.main.info)
             mock_model.generate_image.side_effect = RuntimeError("backend exploded")
-            at.text_input(key="prompt_input").set_value("a dog").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a dog")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             at.run(timeout=10)
             assert not any("Enhanced prompt" in i.value for i in at.main.info)
@@ -2227,7 +2232,7 @@ class TestUIWidgets:
         mock_model.generate_image.side_effect = _two_steps_then_freeze
         with _patched_models(mock_model, mock_model) as (app, _generate):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             frame = _canvas_frame(at)
@@ -2254,7 +2259,7 @@ class TestUIWidgets:
         )
         with _patched_models(mock_model, mock_model) as (app, _generate):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             assert _canvas_frame(at).proto.width_config.pixel_width == (

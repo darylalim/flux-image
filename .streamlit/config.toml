@@ -1,7 +1,8 @@
 # A dark-only custom theme; light mode stays Streamlit's stock light theme.
 #
-# Mechanism (Streamlit 1.64.0 frontend, `xn`/`yn` in static/js/utils.*.js --
-# minified names that move every release): once [theme.light] or [theme.dark]
+# Mechanism (Streamlit frontend, re-read on 1.67.0: `On`/`Dn` in
+# static/js/utils.*.js, `xn`/`yn` in 1.64.0 -- minified names that move every
+# release): once [theme.light] or [theme.dark]
 # is populated the app offers System/Light/Dark, and each mode is built as the
 # top-level [theme] keys plus that mode's own table, merged onto the stock
 # palette of the same base. So every key lives in [theme.dark] or
@@ -13,10 +14,11 @@
 # measured against stock metrics, a mode switch should change nothing but
 # color, and a Google Fonts URL would put a network fetch in a local app.
 #
-# The one light-mode cost no config can avoid: any custom theme sets
-# Streamlit's `secondary` color to primaryColor, so the Run progress bar is
-# stock red #FF4B4B in light mode instead of stock blue #1C83E1 (2.95:1 on its
-# track, against 3.48:1; the status label repeats "step k/n").
+# The one light-mode difference no config can avoid: any custom theme sets
+# Streamlit's `secondary` color to primaryColor, so the Run progress bar is the
+# stock light primary instead of stock blue. Since 1.67's redesigned light
+# palette that is #C53948, 4.88:1 on its #F8F8F7 track (on 1.64 it was
+# #FF4B4B at 2.95:1, against blue's 3.48:1); the status label repeats "step k/n".
 #
 # TestThemeConfig locks this shape and the palette's WCAG AA contrast.
 
@@ -25,24 +27,24 @@
 [theme.dark]
 # Ember, OKLCH(0.570 0.163 43.5): bright, yet its white Run label clears AA
 # with margin (4.79:1; at this hue and chroma the ceiling is #C75213, 4.52:1;
-# stock #FF4B4B is 3.30:1). On hover/focus Streamlit subtracts 15 points of HSL
+# 1.64's stock #FF4B4B was 3.30:1). On hover/focus Streamlit subtracts 15 points of HSL
 # lightness, to #793006 (2.00:1 on the page) -- the price of an AA white label.
 primaryColor = "#C24E0A"
 # Neutral near-black (L* 5.5): no navy cast around the image (stock #0E1117),
-# and the picture stays the brightest field on the page.
+# and the picture stays the brightest field on the page. (1.67's stock is a
+# warm #171614.)
 backgroundColor = "#121212"
 # Prompt field, progress track and, by fallback, the sidebar -- one panel tone.
 secondaryBackgroundColor = "#262626"
-# Stock dark text, pinned: every contrast pair is then read from this file, and
-# left unset, 1.64 logs "Invalid color passed for textColor in theme.sidebar"
-# to the browser console whenever dark mode renders, once [theme.dark.sidebar]
-# exists.
+# 1.64's stock dark text, pinned so every contrast pair is read from this file.
+# (Left unset, 1.64 logged "Invalid color passed for textColor in theme.sidebar"
+# to the browser console once [theme.dark.sidebar] existed; 1.67.0 does not.)
 textColor = "#FAFAFA"
 # Pale ember. The only links sit in an st.caption, drawn at 0.6 opacity, so this
-# renders #A89087 (5.05:1); stock's blue measures 2.77:1 there. Underlined.
+# renders #A89087 (5.05:1); 1.64's stock blue measured 2.77:1 there. Underlined.
 linkColor = "#FFD7C7"
-# Gold warning, 37 degrees of hue clear of the ember; stock's #FFFF12 at 20%
-# composites to olive on a neutral page.
+# Gold warning, 37 degrees of hue clear of the ember; 1.64's stock #FFFF12 at
+# 20% composited to olive on a neutral page.
 yellowBackgroundColor = "#E9AB2B29"
 yellowTextColor = "#FFE2A3"
 # The enhanced-prompt banner touches the canvas: a calm slate tint at 14%.
