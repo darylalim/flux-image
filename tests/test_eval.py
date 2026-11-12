@@ -126,3 +126,32 @@ class TestCompare:
         assert set(report["blind_key"]) == {"1", "2"}
         for order in report["blind_key"].values():
             assert sorted(order) == ["candidate-new", "golden-old"]
+
+
+class TestResolvedRevision:
+    """mflux fetches only weight files, so the revision is read from the
+    cache layout; snapshot_download(local_files_only=True) refuses a partial
+    snapshot, which left the first golden manifest's revision null."""
+
+    def _repo(self, tmp_path, monkeypatch):
+        import huggingface_hub.constants
+
+        monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path))
+        return tmp_path / "models--org--model"
+
+    def test_floating_repo_reads_refs_main(self, tmp_path, monkeypatch):
+        repo = self._repo(tmp_path, monkeypatch)
+        (repo / "refs").mkdir(parents=True)
+        (repo / "refs" / "main").write_text("abc123\n")
+        (repo / "snapshots" / "abc123").mkdir(parents=True)
+        (repo / "snapshots" / "old999").mkdir()
+        assert run_eval.resolved_revision("org/model") == "abc123"
+
+    def test_pinned_repo_without_a_ref_reads_its_snapshot(self, tmp_path, monkeypatch):
+        repo = self._repo(tmp_path, monkeypatch)
+        (repo / "snapshots" / "def456").mkdir(parents=True)
+        assert run_eval.resolved_revision("org/model") == "def456"
+
+    def test_uncached_repo_is_unknown(self, tmp_path, monkeypatch):
+        self._repo(tmp_path, monkeypatch)
+        assert run_eval.resolved_revision("org/model") is None

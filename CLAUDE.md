@@ -67,7 +67,8 @@ All four green, plus `README.md` re-synced if mirrored content moved. The `Stop`
 | `streamlit_app.py` | the entire application |
 | `tests/` | the suite (see Testing conventions) |
 | `examples/` | bundled edit-example images (`mug.webp`, `retriever.webp`): BFL's Apache-2.0 generations from `flux-3-image-klein` `examples/inputs/` at `bfc8889`, `mug.webp` cropped to 3:4 so the example exercises portrait sizing — attributed in README's License section |
-| `docs/` | the README screenshot |
+| `eval/` | the seeded evaluation set (`cases.json`) and its runner (`run_eval.py`: `run` and `compare`). Needs real weights, so it is not part of pytest; outputs go to `~/Library/Application Support/flux-image/eval/`, never the repo. See the plan's Evaluation section |
+| `docs/` | the README screenshot and `plans/` |
 | `.claude/` | repo-shared Claude Code hooks |
 | `.github/workflows/` | CI quality gates + release |
 | `.streamlit/config.toml` | Streamlit config — a dark-only color theme (`[theme.dark]` + `[theme.dark.sidebar]`); light mode is stock except the Run progress bar (see the theme bullet) |
@@ -75,7 +76,7 @@ All four green, plus `README.md` re-synced if mirrored content moved. The `Stop`
 
 `streamlit_app.py` is structured in four sections:
 
-1. **Model initialization** — `Flux2Klein` (text-to-image) and `Flux2KleinEdit` (multi-image editing) from mflux, behind two `@st.cache_resource` getters, `_get_model()` and `_get_edit_model()`. Both are built with `model_path=MODEL_REPO` *and* `model_config=ModelConfig.flux2_klein_4b()`; the rationale for passing both is in the comment above `_get_model()`. Both pass through `_materialized()`, which evaluates the weights before caching (mandatory, see Gotchas). MLX manages Apple Silicon unified memory automatically. `DEFAULT_STEPS` (4) is the distilled variant's step count — it seeds the steps slider and back-fills `infer()`'s `num_inference_steps`. `GUIDANCE` (1.0) is pinned, not a default: there is no guidance slider or parameter (see Gotchas).
+1. **Model initialization** — `Flux2Klein` (text-to-image) and `Flux2KleinEdit` (multi-image editing) from mflux, behind two `@st.cache_resource` getters, `_get_model()` and `_get_edit_model()`. Both are built with `model_path=MODEL_REPO` *and* `model_config=ModelConfig.flux2_klein_4b()`; the rationale for passing both is in the comment above `_get_model()`. Both pass through `_materialized()`, which evaluates the weights before caching (mandatory, see Gotchas). MLX manages Apple Silicon unified memory automatically. `DEFAULT_STEPS` (4) is the distilled variant's step count — it seeds the steps slider and back-fills `infer()`'s `num_inference_steps`. `GUIDANCE` (1.0) is pinned, not a default: there is no guidance slider or parameter (see Gotchas). `DEFAULT_SIZE` (1024) and `DEFAULT_AUTO_ENHANCE` (off) seed the size sliders and the upsampling toggle; they are constants so `eval/run_eval.py` runs "as shipped", and `test_widgets_start_at_the_shipped_default_constants` keeps the widgets on them.
 
 2. **Prompt upsampling** — `_get_vlm()` loads Qwen3-VL-2B-Instruct-8bit via `mlx_vlm.load()`, cached, returning a `(model, processor, config)` triple. Two system prompts: `UPSAMPLE_PROMPT_TEXT_ONLY` (text-to-image, capped at 120 words) and `UPSAMPLE_PROMPT_WITH_IMAGES` (concrete language, preserve unchanged elements); `upsample_prompt(prompt, image_list=None)` selects between them on whether images were supplied. It formats messages via `apply_chat_template` and generates via `mlx_vlm.generate()` — the app samples rather than decoding greedily, and every sampling parameter carries its own justification in the comments inside that call. Images are downscaled to `VLM_MAX_IMAGE_SIZE` (768px longest edge) by `_vlm_images()`. `_resolve_prompt(prompt, image_list, auto_enhance)` wraps the decision and returns `(prompt, was_enhanced)`. Results are memoized in a bounded per-session `st.session_state._enhance_cache` (keyed on `(prompt, image set)`, oldest evicted past 32) so re-Running an unchanged request doesn't re-invoke the VLM; the `auto_enhanced_prompt` key behind the enhanced-prompt banner is dropped whenever the prompt text or image set changes, and on each Run. It is set again only when that Run's generation succeeds, so the banner always sits under the image it produced.
 
@@ -117,7 +118,7 @@ uv run pytest tests/test_ci.py   # Run one file
 uv run pytest -m smoke           # Opt-in: real weights, real generation
 ```
 
-Test files: `test_streamlit_app.py`, `test_hooks.py`, `test_ci.py`, `test_workflows.py`, `test_secrets.py`, `test_license.py`, `test_readme.py`, `test_smoke.py`.
+Test files: `test_streamlit_app.py`, `test_hooks.py`, `test_ci.py`, `test_workflows.py`, `test_secrets.py`, `test_license.py`, `test_readme.py`, `test_eval.py`, `test_smoke.py`.
 
 When working with Python, invoke the relevant `/astral:<skill>` for uv, ty, and ruff. When editing Streamlit UI code in `streamlit_app.py`, invoke the `developing-with-streamlit` skill first — it loads reference docs version-matched to the Streamlit release in `.venv`. Run its discovery script with `python3`; bare `python` is not on PATH on this machine.
 

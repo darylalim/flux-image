@@ -112,14 +112,22 @@ def resolved_revision(repo_id):
     """The snapshot SHA the HF cache serves for ``repo_id``, as actually loaded.
 
     Read even for a model the app doesn't pin: FLUX.2 floats to ``main``, and
-    an upstream re-upload would otherwise look like toolchain drift.
+    an upstream re-upload would otherwise look like toolchain drift. Read from
+    the cache's own layout, because mflux fetches only the weight files and
+    ``snapshot_download(local_files_only=True)`` refuses such a partial
+    snapshot. ``refs/main`` covers a floating repo; a repo fetched by pinned
+    SHA has no ref, so its single snapshot folder is the answer.
     """
-    from huggingface_hub import snapshot_download
+    from huggingface_hub.constants import HF_HUB_CACHE
 
-    try:
-        return Path(snapshot_download(repo_id, local_files_only=True)).name
-    except Exception:  # not cached, or a hub error: record that we don't know
-        return None
+    repo_dir = Path(HF_HUB_CACHE) / ("models--" + repo_id.replace("/", "--"))
+    ref = repo_dir / "refs" / "main"
+    if ref.is_file():
+        return ref.read_text().strip()
+    snapshots = sorted(p.name for p in (repo_dir / "snapshots").glob("*"))
+    if len(snapshots) == 1:
+        return snapshots[0]
+    return snapshots or None  # several and no ref: record them all
 
 
 def pixel_sha256(image):
@@ -161,7 +169,16 @@ def _timed_run(app, prompt, image_list, width, height, seed, auto_enhance):
     return image, used_seed, final_prompt, was_enhanced, seconds, peak_gb
 
 
-def run(label, *, out_root, cases_path, only=None, latency=True, force=False):
+def run(
+    label,
+    *,
+    out_root,
+    cases_path,
+    only=None,
+    latency=True,
+    force=False,
+    auto_enhance: bool | None = None,
+):
     sys.path.insert(0, str(REPO_ROOT))
     import mlx.core as mx
 
@@ -175,7 +192,9 @@ def run(label, *, out_root, cases_path, only=None, latency=True, force=False):
     out.mkdir(parents=True, exist_ok=True)
 
     size = app.DEFAULT_SIZE
-    auto_enhance = app.DEFAULT_AUTO_ENHANCE
+    # As shipped unless overridden: the plan also records an upsampling-off figure.
+    if auto_enhance is None:
+        auto_enhance = app.DEFAULT_AUTO_ENHANCE
     manifest = {
         "label": label,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -191,15 +210,9 @@ def run(label, *, out_root, cases_path, only=None, latency=True, force=False):
             "auto_enhance": auto_enhance,
             "guidance": getattr(app, "GUIDANCE", None),
         },
-        "model": {
-            "repo": app.MODEL_REPO,
-            "revision": resolved_revision(app.MODEL_REPO),
-        },
-        "vlm": (
-            {"repo": app.VLM_MODEL_ID, "revision": resolved_revision(app.VLM_MODEL_ID)}
-            if auto_enhance
-            else None
-        ),
+        # Revisions are resolved after the runs: the first Run may download.
+        "model": {"repo": app.MODEL_REPO, "revision": None},
+        "vlm": {"repo": app.VLM_MODEL_ID, "revision": None} if auto_enhance else None,
         "drift": {"size": DRIFT_SIZE, "threshold_pct": DRIFT_THRESHOLD_PCT},
         "latency": None,
         "cases": [],
@@ -208,6 +221,8 @@ def run(label, *, out_root, cases_path, only=None, latency=True, force=False):
     if latency:
         lat = doc["latency"]
         lat_case = next(c for c in doc["cases"] if c["id"] == lat["case"])
+        # Includes a download if the weights are not cached yet: check the
+        # model's cache before reading this as a load time.
         print(f"latency: case {lat_case['id']}, cold first Run (load + warm-up)...")
         start = time.perf_counter()
         *_, peak = _timed_run(
@@ -240,6 +255,11 @@ def run(label, *, out_root, cases_path, only=None, latency=True, force=False):
             app._get_model.clear()
             mx.clear_cache()
             released = True
+            # Load the edit pipeline outside any case's timing, so the first
+            # edit case measures a Run, not a load (or a download).
+            start = time.perf_counter()
+            app._get_edit_model()
+            manifest["edit_model_load_seconds"] = round(time.perf_counter() - start, 2)
         image_list = [Image.open(app._EXAMPLES_DIR / name) for name in refs] or None
         if image_list:
             width, height = app._dimensions_from_images(image_list)
@@ -274,6 +294,9 @@ def run(label, *, out_root, cases_path, only=None, latency=True, force=False):
         print(f"   {seconds:.1f} s, peak {peak:.1f} GB")
 
     manifest["cases"].sort(key=lambda c: c["id"])
+    manifest["model"]["revision"] = resolved_revision(app.MODEL_REPO)
+    if manifest["vlm"]:
+        manifest["vlm"]["revision"] = resolved_revision(app.VLM_MODEL_ID)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"wrote {out}")
     return out
@@ -406,6 +429,11 @@ def main(argv=None):
     p_run.add_argument("--only", type=lambda s: {int(x) for x in s.split(",")})
     p_run.add_argument("--no-latency", action="store_true")
     p_run.add_argument("--force", action="store_true", help="overwrite the label")
+    p_run.add_argument(
+        "--upsampling",
+        choices=("on", "off"),
+        help="override the shipped DEFAULT_AUTO_ENHANCE (recorded in the manifest)",
+    )
 
     p_cmp = sub.add_parser("compare", help="drift check and blind contact sheet")
     p_cmp.add_argument("a")
@@ -423,6 +451,7 @@ def main(argv=None):
             only=args.only,
             latency=not args.no_latency,
             force=args.force,
+            auto_enhance=None if args.upsampling is None else args.upsampling == "on",
         )
     else:
         compare(
