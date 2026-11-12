@@ -182,9 +182,9 @@ class TestIgnoreRules:
     # once their paths are fixed.
     _MUST_STAY_TRACKABLE = (
         "docs/screenshot-dark.png",
-        "examples/woman1.webp",
-        "examples/cat_window.webp",
-        "examples/bird.webp",
+        "examples/mug.webp",
+        "examples/retriever.webp",
+        "examples/LICENSE",
         "uv.lock",
         ".python-version",
         "pyproject.toml",

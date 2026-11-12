@@ -63,11 +63,10 @@ def test_edit_accepts_the_pil_images_the_ui_builds(app):
     it exactly the way the UI does rather than passing paths.
     """
     image_list = [
-        Image.open(app._EXAMPLES_DIR / name)
-        for name in ("woman1.webp", "cat_window.webp")
+        Image.open(app._EXAMPLES_DIR / name) for name in ("mug.webp", "retriever.webp")
     ]
     image, _ = app.infer(
-        "the person from image 1 is petting the cat from image 2",
+        "print the dog from image 2 onto the mug in image 1",
         seed=7,
         width=_W,
         height=_H,
@@ -110,12 +109,12 @@ def test_cached_models_generate_on_a_new_thread(app):
 
     app._get_model()
     app._get_edit_model()
-    image_list = [Image.open(app._EXAMPLES_DIR / "cat_window.webp")]
+    image_list = [Image.open(app._EXAMPLES_DIR / "retriever.webp")]
     results = {}
 
     def generate(name, **kwargs):
         try:
-            results[name] = app.infer("a cat", seed=5, width=_W, height=_H, **kwargs)
+            results[name] = app.infer("a dog", seed=5, width=_W, height=_H, **kwargs)
         except Exception as exc:  # surfaced below with the pipeline's name
             results[name] = exc
 

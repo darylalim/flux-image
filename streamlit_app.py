@@ -95,14 +95,17 @@ EXAMPLE_PROMPTS = [
 
 _EXAMPLES_DIR = Path(__file__).resolve().parent / "examples"
 
-# Editing examples as (prompt, [image paths]) from the FLUX.2 [klein] space.
+# Editing examples as (prompt, [image paths]). The images are BFL's own
+# generations from github.com/black-forest-labs/flux-3-image-klein (Apache-2.0,
+# examples/inputs/2.png and 3.png at bfc8889). mug.webp is 2.png cropped to 3:4
+# so the example also exercises portrait sizing; retriever.webp is 3.png as is.
+# The prompt is the two-reference edit from that repo's examples/README.md.
 EDIT_EXAMPLES = [
     (
-        "The person from image 1 is petting the cat from image 2, the bird from image 3 is next to them",
+        "Print the dog from image 2 onto the mug in image 1",
         [
-            str(_EXAMPLES_DIR / "woman1.webp"),
-            str(_EXAMPLES_DIR / "cat_window.webp"),
-            str(_EXAMPLES_DIR / "bird.webp"),
+            str(_EXAMPLES_DIR / "mug.webp"),
+            str(_EXAMPLES_DIR / "retriever.webp"),
         ],
     ),
 ]

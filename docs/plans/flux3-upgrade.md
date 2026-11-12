@@ -364,7 +364,7 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 
 - **Budget: ≤ 60 s for one 1024² text-to-image Run, warm, upsampling on.** Warm means the models are loaded and the prompt cache has been primed by the load-time warm-up. The budget is the owner's (2026-10-21).
 - **What is timed:** wall clock from the Run submit to the result drawn, which is `_resolve_prompt` plus `infer()`. Take the median of 3 Runs after one discarded warm Run, at fixed seeds.
-- **Recorded, not gated:** an edit with 3 references; upsampling off; the cold first Run of a server (model load plus the warm-up, ~30 s of it on 8B). If an edit exceeds 60 s, bring the numbers to the owner rather than assuming the budget covers edits.
+- **Recorded, not gated:** the 2-reference example edit; upsampling off; the cold first Run of a server (model load plus the warm-up, ~30 s of it on 8B). If an edit exceeds 60 s, bring the numbers to the owner rather than assuming the budget covers edits.
 - **Baseline:** Phase 1b records FLUX.2's timings as shipped (4 steps, upsampling off by default) on the upgraded toolchain, so the Phase 2 numbers can be read against what users have today.
 - **If it fails, the levers in order:**
   1. `DEFAULT_STEPS` 16 → 12;
@@ -388,12 +388,12 @@ detection. It gates Phase 2's merge alongside the Memory budget.
     
     Cases 1–4 are the app's `EXAMPLE_PROMPTS`, verbatim.
   - **Edits (4):**
-    7. the three-reference composition, `EDIT_EXAMPLES[0]`;
-    8. "make it snowy" on `cat_window` (a change that preserves the scene);
-    9. "turn this into a watercolor painting" on `woman1` (style, identity kept);
-    10. "replace the bird with a hummingbird" on `bird` (object swap).
+    7. the two-reference composition, `EDIT_EXAMPLES[0]` ("Print the dog from image 2 onto the mug in image 1");
+    8. "make it snowy outside the window" on `mug` (a change that preserves the scene);
+    9. "turn this into a watercolor painting" on `retriever` (style, identity kept);
+    10. "replace the golden retriever with a black labrador" on `retriever` (object swap, the beach unchanged).
     
-    The edit cases use whichever images Phase 1a's license check leaves in `examples/`. That check runs **before** the FLUX.2 golden run, so both versions are scored on the same inputs.
+    The edit cases use the images Phase 1a's license check left in `examples/`: BFL's Apache-2.0 `mug.webp` (768×1024) and `retriever.webp` (1024²), which replaced the unlicensed Space images (see Phase 1a step 4). That check ran **before** the FLUX.2 golden run, so both versions are scored on the same inputs.
 - **Run as shipped,** with each version's shipped defaults: steps, default size and upsampling. For FLUX 3, upsampling is on; for the FLUX.2 baseline it is off, its default. The "1024²" above is today's default. If Phase 2 adopts the 768² time lever, FLUX 3 is evaluated at 768², because that is what users would get. Record each enhanced prompt. Upsampling is greedy, so the enhanced prompt is deterministic per version and is part of the output.
 - **Where things live:**
   - Tracked: `eval/cases.json` (prompts, references, seeds, sizes) and `eval/run_eval.py`. The script imports `streamlit_app`'s `infer`/`_resolve_prompt`, so it measures the app's real path, and also prints the latency figures above. It needs real weights, so it is not part of `pytest`. ruff and ty cover it as they do every tracked `.py`. Add `eval/` to CLAUDE.md's Architecture table.
@@ -501,6 +501,7 @@ before Phase 1b.
    only pre-upgrade baseline, so the images must be final before it.
    - Find the FLUX.2 [klein] Space's license and the images' origin, and record both in the README.
    - If either can't be confirmed, replace them now with BFL's Apache-2.0 `examples/inputs/` or images the owner made. Update `EDIT_EXAMPLES` and its provenance comment, and re-run the tests that pin the example dimensions (e.g. woman1's 512×768 → 672×1024).
+   - **Done 2026-11-12: replaced.** The origin was confirmed (all three files byte-identical to `black-forest-labs/FLUX.2-klein-4B`'s), but the Space declares no license: no `license:` key, no LICENSE file, no author for the images. `inputs/1.png` in BFL's repo was skipped too, since nothing documents where it came from. `2.png` (mug) and `3.png` (golden retriever) are documented outputs of BFL's CLI with their seeds, so they became `mug.webp` (cropped to 3:4, so the example still exercises portrait sizing: 768×1024) and `retriever.webp`. BFL's LICENSE is vendored as `examples/LICENSE`, and the prompt is BFL's own two-reference edit.
    - Commit `docs(examples): record the example images' license` or `chore(examples): replace unlicensed example images`.
    
    This makes Phase 1a four commits.
@@ -641,7 +642,7 @@ that passes all three**, not the best on any one gate.
   update any that assume the default is off.
 - **Switch `VLM_MODEL_ID` to `mlx-community/Qwen3-VL-8B-Instruct-4bit`**, pinned with `VLM_REVISION` (Weight pinning; Decisions)
   and walk the fallback order against the memory budget. Measure each combination
-  with both models resident: a t2i Run, then an i2i Run with 3 references, then a
+  with both models resident: a t2i Run, then the 2-reference example edit, then a
   t2i Run again, which also exercises APC eviction.
   - If falling back to 4B-8bit, re-check medium and grounding on the four cases in Facts with the appendix script (pass the model id as the third argument).
   - Record the chosen pair, its footprint and its latencies in CLAUDE.md, replacing the 2B-era Qwen3-VL gotchas that no longer apply (sampling parameters, the 120-word cap, the "prompt wording does not fix it" note).
@@ -702,10 +703,9 @@ permissive", FLUX.2 "Apache-2.0") is false. The fix ships in that commit:
 - **Keep `eval/run_eval.py` working across the swap.** Phase 1a wrote it against FLUX.2's `infer()`, and this phase drops `guidance`, routes both modes through one instance, and changes the defaults.
   - The runner should call only the app's public path (`_resolve_prompt` and `infer()`, with the shipped defaults read from the app's constants). It should never call the getters or pass model-specific keywords, so that the swap needs no runner change beyond what `infer()`'s signature forces.
   - Re-run it on the Phase 1b lock (FLUX.2) once after any runner change, to confirm it still reproduces `golden-flux2-0.9.0` before scoring FLUX 3 against that baseline.
-- `EDIT_EXAMPLES` comment says "from the FLUX.2 [klein] space". Check they still give
-  sensible edits; consider BFL's own examples (`examples/inputs/`, Apache-2.0) if not.
-  Their license was settled in Phase 1a. Replacing them now, for quality
-  rather than license, invalidates the edit cases' FLUX.2 baseline. If that
+- `EDIT_EXAMPLES` already uses BFL's own `examples/inputs/` images (Phase 1a).
+  Check the example still gives a sensible edit on FLUX 3. Replacing the images
+  now, for quality rather than license, invalidates the edit cases' FLUX.2 baseline. If that
   happens, re-capture those 4 cases on FLUX.2 *before* merging Phase 2, while
   the Phase 1b lock still runs it, and record why.
 - **Disk:** follow the Disk plan section.
@@ -1010,6 +1010,11 @@ Used for the 2026-10-21 measurements. Run with the repo's venv from a directory
 holding BFL's `pup_prompts_external_vlm.json`:
 
 `HF_HUB_OFFLINE=1 .venv/bin/python -I measure_pup.py pup_prompts_external_vlm.json .`
+
+The script names the original example images, which Phase 1a replaced. They
+remain in git history before the merge of `chore/hygiene-and-eval`; check them
+out to reproduce these figures, or swap in `mug.webp`/`retriever.webp` for new
+ones.
 
 ```python
 """Measure BFL's external-VLM upsampling prompts on Qwen3-VL-2B (mlx-vlm)."""

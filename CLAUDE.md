@@ -66,7 +66,7 @@ All four green, plus `README.md` re-synced if mirrored content moved. The `Stop`
 |---|---|
 | `streamlit_app.py` | the entire application |
 | `tests/` | the suite (see Testing conventions) |
-| `examples/` | bundled edit-example images (`woman1.webp`, `cat_window.webp`, `bird.webp`) |
+| `examples/` | bundled edit-example images (`mug.webp`, `retriever.webp`): BFL's Apache-2.0 generations from `flux-3-image-klein` `examples/inputs/` at `bfc8889`, `mug.webp` cropped to 3:4 so the example exercises portrait sizing — attributed in README's License section |
 | `docs/` | the README screenshot |
 | `.claude/` | repo-shared Claude Code hooks |
 | `.github/workflows/` | CI quality gates + release |
