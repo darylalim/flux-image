@@ -80,6 +80,12 @@ def _run_hook(script, file_path, *, project_dir, env=None):
     return _exec(script, payload, project_dir=project_dir, env=env)
 
 
+def _run_bash_hook(script, command, *, project_dir, env=None):
+    """Invoke a Bash-matched PreToolUse hook: the command on stdin."""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    return _exec(script, payload, project_dir=project_dir, env=env)
+
+
 def _run_stop_hook(script, *, project_dir, env=None):
     """Invoke a Stop hook: no tool payload (Stop receives none)."""
     return _exec(script, "", project_dir=project_dir, env=env)
@@ -184,8 +190,13 @@ def _all_commands():
     ]
 
 
-def _matchers_for(event):
-    return [g.get("matcher") for g in json.loads(_SETTINGS.read_text())["hooks"][event]]
+def _matchers_for(event, scripts):
+    """Matchers of the ``event`` groups that run any of ``scripts``."""
+    return [
+        g.get("matcher")
+        for g in json.loads(_SETTINGS.read_text())["hooks"][event]
+        if {Path(h["command"]).name for h in g["hooks"]} & scripts
+    ]
 
 
 class TestHookWiring:
@@ -199,7 +210,7 @@ class TestHookWiring:
         # transcription this file avoids elsewhere — that mirrored a list inside
         # the script under test; this pins config against the scripts on disk.
         by_event = _commands_by_event()
-        assert by_event["PreToolUse"] == {"guard-paths.sh"}
+        assert by_event["PreToolUse"] == {"guard-paths.sh", "guard-cache.sh"}
         assert by_event["PostToolUse"] == {"ruff-format.sh", "mark-tests-pending.sh"}
         assert by_event["Stop"] == {"run-tests.sh"}
 
@@ -217,14 +228,26 @@ class TestHookWiring:
             assert script.exists(), f"{cmd} -> missing {script}"
             assert os.access(script, os.X_OK), f"{script} is not executable"
 
-    @pytest.mark.parametrize("event", ["PreToolUse", "PostToolUse"])
-    def test_tool_matchers_cover_edit_write_multiedit(self, event):
+    @pytest.mark.parametrize(
+        ("event", "scripts"),
+        [
+            ("PreToolUse", {"guard-paths.sh"}),
+            ("PostToolUse", {"ruff-format.sh", "mark-tests-pending.sh"}),
+        ],
+    )
+    def test_tool_matchers_cover_edit_write_multiedit(self, event, scripts):
         # A dropped MultiEdit would silently disable the hooks on that tool.
-        matchers = _matchers_for(event)
-        assert matchers, f"{event} has no matcher groups"
+        matchers = _matchers_for(event, scripts)
+        assert matchers, f"{event} has no matcher groups for {scripts}"
         assert all(
             {"Edit", "Write", "MultiEdit"} <= set(m.split("|")) for m in matchers
         ), matchers
+
+    def test_cache_guard_matches_bash(self):
+        # The cache-wiping commands only ever arrive through the Bash tool.
+        matchers = _matchers_for("PreToolUse", {"guard-cache.sh"})
+        assert matchers
+        assert all("Bash" in m.split("|") for m in matchers), matchers
 
     def test_no_whole_project_gate_runs_per_edit(self):
         # PostToolUse fires once per edit, so a whole-project command there
@@ -323,6 +346,116 @@ class TestGuardPaths:
         )
         assert _decision(result)["permissionDecision"] == "deny"
         assert "jq" in _decision(result)["permissionDecisionReason"]
+
+
+_COMMIT_MENTIONING_THE_RULES = (
+    "git commit -m \"$(cat <<'EOF'\n"
+    "harden(hooks): deny hf cache prune; deny uv cache clean\n"
+    "\n"
+    "rm -rf ~/.cache/huggingface is denied too.\n"
+    "EOF\n"
+    ')"'
+)
+
+
+@_requires_shell
+class TestGuardCache:
+    """PreToolUse guard on Bash: the Disk plan's "never" commands.
+
+    The deny and allow lists are the Disk plan's (docs/plans/flux3-upgrade.md),
+    not the script's: each case is a command a session would plausibly type,
+    and the interesting ones are the wrappers and spellings a naive substring
+    or first-word match would get wrong in one direction or the other.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "hf cache prune",
+            "hf cache prune -y",
+            "hf cache prune --no-dry-run",
+            "hf cache prune --dry-run --no-dry-run",
+            "uv run hf cache prune",
+            "uvx --from huggingface_hub hf cache prune",
+            "HF_HUB_OFFLINE=1 hf cache prune",
+            "cd /tmp && hf cache prune",
+            "uv cache clean",
+            "uv cache clean mlx",
+            "uv --no-progress cache clean",
+            "sudo uv cache clean",
+            "rm -rf ~/.cache/huggingface",
+            'rm -r "$HOME/.cache/huggingface/hub/models--mlx-community--x"',
+            "rm -Rf $HF_HOME/hub",
+            "rm --recursive ~/.cache/uv",
+            "rm -rf /some/where/hub/blobs/abc",
+            "find ~/.cache/huggingface -name '*.incomplete' -delete",
+        ],
+    )
+    def test_cache_wiping_commands_are_denied(self, command, tmp_path):
+        result = _run_bash_hook("guard-cache.sh", command, project_dir=tmp_path)
+        assert result.returncode == 0  # the decision rides in the JSON
+        decision = _decision(result)
+        assert decision["hookEventName"] == "PreToolUse"
+        assert decision["permissionDecision"] == "deny"
+        assert "Disk plan" in decision["permissionDecisionReason"]
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "hf cache ls",
+            "hf cache rm mlx-community/flux2-klein-4b-8bit",
+            "hf cache prune --dry-run",
+            "uv run hf cache prune --dry-run",
+            "hf cache prune --help",
+            "uv cache prune",
+            "uv cache dir",
+            "du -sh ~/.cache/huggingface",
+            "df -h ~",
+            "find ~/.cache/huggingface -name '*.incomplete'",
+            "rm ~/.cache/huggingface/stored_tokens",
+            "rm -rf build/",
+            # Text, not commands: the phrase sits inside one argument of git/echo.
+            'git commit -m "harden: deny hf cache prune; uv cache clean"',
+            _COMMIT_MENTIONING_THE_RULES,
+            'echo "rm -rf ~/.cache/huggingface"',
+        ],
+    )
+    def test_prescribed_and_unrelated_commands_are_allowed(self, command, tmp_path):
+        result = _run_bash_hook("guard-cache.sh", command, project_dir=tmp_path)
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
+
+    @pytest.mark.parametrize(
+        "command", ["HF Cache Prune", "rm -rf ~/.Cache/HuggingFace/hub"]
+    )
+    def test_matching_is_case_insensitive(self, command, tmp_path):
+        # On macOS's case-insensitive filesystem both of these hit the real thing.
+        result = _run_bash_hook("guard-cache.sh", command, project_dir=tmp_path)
+        assert _decision(result)["permissionDecision"] == "deny"
+
+    def test_missing_jq_fails_closed_and_names_the_fix(self, tmp_path):
+        # Without jq the raw payload is matched anywhere, so even a commit
+        # message that only mentions the phrase is denied; the reason must say
+        # how to get out of that state.
+        result = _run_bash_hook(
+            "guard-cache.sh",
+            _COMMIT_MENTIONING_THE_RULES,
+            project_dir=tmp_path,
+            env=_no_jq_env(tmp_path),
+        )
+        decision = _decision(result)
+        assert decision["permissionDecision"] == "deny"
+        assert "install jq" in decision["permissionDecisionReason"]
+
+    def test_missing_jq_still_allows_ordinary_commands(self, tmp_path):
+        result = _run_bash_hook(
+            "guard-cache.sh",
+            "uv run pytest",
+            project_dir=tmp_path,
+            env=_no_jq_env(tmp_path),
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
 
 
 @_requires_shell
