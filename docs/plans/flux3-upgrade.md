@@ -591,6 +591,15 @@ to one side or the other. Starts from Phase 1a merged; one session.
 >   Commit 2 still isolates mlx, mlx-vlm, transformers and the rest.
 > - The mflux 0.23 Facts above (FLUX 3 classes, signatures, `image_paths`,
 >   `prompt_cache`) were read on 0.23.0; **Phase 2 re-reads them on 0.24**.
+>
+> **Results (2026-11-12).**
+> - Step 2 lock, against the rehearsal table: mlx-vlm went to **0.7.12** (not 0.7.10) and transformers to 5.22.2. New majors appeared: opencv-python 5.0, python-dateutil 4.0 and watchdog 7 (non-macOS only). fsspec **no longer downgrades** (datasets 5.2 accepts 2026.9.0). License scan: 97 distributions, the same three flags as before; `hf_transfer` is Apache-2.0 per its repo.
+> - Smoke: green after the commit-1 upgrade. After step 2 it caught exactly the case step 2 anticipates: transformers 5.18.0 (bisected) put all 14 Qwen3-VL special tokens in `all_special_ids`, so `result.text` no longer leaks markers. The `token_ids` decode is kept, and the test now asserts only the decode.
+> - Streamlit 1.67.0 (not 1.66.1):
+>   - Unchanged, to the pixel: the canvas fold numbers, the collapsed-sidebar misses and the 640px stacking.
+>   - Unchanged in behavior: the `st.status` close, the `wrap` default, the sidebar auto-collapse, the image toolbar (still no per-element switch), the `secondary`←primary rule and the −15-point hover.
+>   - Changed: the `textColor` warning is gone, and **both stock palettes were redesigned**. Light is now `#FFFFFF`/`#F8F8F7`/`#C53948` with opaque alert fills; dark is warm `#171614` with a `#CF4250` primary. **Phase 3's light theme was designed against 1.64's stock light** (the `#FF4B4B` primary, alerts as the hue at 10% alpha, `#F0F2F6` panels) and must be re-derived from 1.67's. The light Run label (now 5.18:1) and progress bar (now 4.88:1) already pass upstream.
+> - Latency baseline (`flux2-0.9.0-toolchain-2026-11-12`): text-to-image 26.5 s warm median, and **edits 4–18% slower** than on the old toolchain, re-timed quietly (79.8 / 47.5 / 58.3 / 60.9 s for cases 7–10). Peak memory fell from 17.4 to 9.5 GB for text-to-image. The edit budget table above still reads 2× the **old** toolchain's times. Whether to re-base it on these figures is the **owner's call**, since the owner set it.
 
 1. **mflux alone.** `uv lock --upgrade-package mflux`. Confirm in the diff that mflux becomes 0.23.0
    and mlx 0.32.4, and that **Pillow does not move**. Gates, then
@@ -1031,16 +1040,16 @@ come from:
 
 ## Open questions for the implementing session
 
-1. Does the `_materialized` per-thread stream bug still reproduce on mlx 0.32.4? (Phase 1b smoke)
+1. ~~Does the `_materialized` per-thread stream bug still reproduce on mlx 0.32.4?~~ Yes (2026-11-12, mflux 0.24.0): with the guard stubbed out, both pipelines fail on a second thread. The guard stays. Question 4's APC-on-a-later-thread question remains open for Phase 2.
 2. Does the single-instance subclass type-check under ty and produce both modes? (Phase 2 smoke)
 3. Q8 footprint against the budget above. (Phase 2 measurement)
 4. ~~Prefill latency~~: measured (Facts). Still open: whether a load-time warm-up fixes the first-request miss, and pool sizing against eviction. Concurrent use is settled by the inference lock (Memory budget). Still open is whether APC's stored MLX arrays work on a *later* rerun's thread, which is the `_materialized` question.
 5. ~~Can mflux pin a revision?~~: only for repos in its table. Pin through `snapshot_download(..., revision=)` to a local path.
 6. Which rung of the VLM fallback order fits the memory budget, and does it pass the quality gate? (Phase 2 measurement + Evaluation)
-7. Does Streamlit 1.66.1 keep 1.64's canvas geometry and theme behavior, or do the fold constants need retuning? (Phase 1b step 3)
-8. Has Pillow fixed 13.0's `_IntegralLike` import, so the `<13` cap can go? (Phase 1b step 2; re-check before release)
+7. ~~Does Streamlit 1.66.1 keep 1.64's canvas geometry and theme behavior?~~ Checked on **1.67.0** (the lock moved past 1.66.1): the geometry is identical to the pixel, so no retune. Theme behavior is the same, but **both stock palettes were redesigned**, which changes Phase 3's inputs (see the Phase 1b notes).
+8. ~~Has Pillow fixed 13.0's `_IntegralLike` import?~~ No, but it no longer matters: mflux 0.24 avoids `PIL._typing` and requires `pillow>=13`. The cap was never added.
 9. Does FLUX 3 at 16 steps fit 60 s for text-to-image and 2× FLUX.2 for edits on the M2 Max, and if not, which lever passes both the time and the quality gate? (Phase 2, Evaluation)
-10. Is a 2% mean-absolute-difference flag the right sensitivity? (Phase 1b drift check.) ~~Is MLX output bit-identical on unchanged versions?~~ Yes: Phase 1a's repeat run matched the golden run pixel for pixel on all 10 cases (2026-11-12). So on unchanged versions any drift at all is a signal, and the 2% threshold matters only across version bumps.
+10. Is a 2% mean-absolute-difference flag the right sensitivity? (Phase 1b drift check: across the 1b version bump the cases measured 0.22–3.55%, and one flagged — a reframing of the same scene. Kept at 2% pending the owner's re-score of case 1.) ~~Is MLX output bit-identical on unchanged versions?~~ Yes: Phase 1a's repeat run matched the golden run pixel for pixel on all 10 cases (2026-11-12). So on unchanged versions any drift at all is a signal, and the 2% threshold matters only across version bumps.
 
 ## Phase exit checklist
 

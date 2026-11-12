@@ -102,16 +102,18 @@ _APP_PATH = _REPO_ROOT / "streamlit_app.py"
 # of a UI component (success criterion 1.4.11).
 _WCAG_AA_TEXT = 4.5
 _WCAG_AA_NON_TEXT = 3.0
-# Streamlit 1.64 draws a whole st.caption block at this opacity, so a caption
-# link's rendered color is a blend with the surface under it.
+# Streamlit (1.64 through 1.67, measured) draws a whole st.caption block at
+# this opacity, so a caption link's rendered color is a blend with the surface
+# under it.
 _CAPTION_OPACITY = 0.6
-# Streamlit 1.64's stock dark (fill, text) per alert hue -- `Et` in
-# static/js/utils.*.js, the fill being the hue at 20% alpha. An alert key
-# [theme.dark] leaves unset falls back to these.
+# Streamlit 1.67's stock dark (fill, text) per alert hue -- `Ot` in
+# static/js/utils.*.js. An alert key [theme.dark] leaves unset falls back to
+# these. 1.67's redesigned palette made the fills opaque; 1.64's were the hue
+# at 20% alpha (red #FF6C6C33 under #FF6C6C).
 _STOCK_DARK_ALERTS = {
-    "red": ("#FF6C6C33", "#FF6C6C"),
-    "yellow": ("#FFFF1233", "#FFFFC2"),
-    "blue": ("#3D9DF333", "#3D9DF3"),
+    "red": ("#412023", "#F2919A"),
+    "yellow": ("#302917", "#FBD54F"),
+    "blue": ("#1E2A3D", "#85B8F8"),
 }
 # The alerts the app draws, and where: notices.error (red), notices.warning and
 # upsample_prompt's warning (yellow) and the enhanced-prompt banner (blue) in
@@ -251,17 +253,19 @@ class TestThemeConfig:
     neither table and cost the Light/Dark/System switcher outright). Contrast:
     the palette is this repo's own now, so WCAG AA is too.
 
-    The contrast tests model these Streamlit 1.64 frontend behaviors, to be
-    re-checked on an upgrade: the sidebar inherits every dark key it does not
-    override, its background falling back to secondaryBackgroundColor; the
-    primary button's label is white; the prompt field and the progress track
-    are secondaryBackgroundColor, the progress fill primaryColor; links are
+    The contrast tests model these Streamlit frontend behaviors, last
+    re-checked in the browser on 1.67.0 (re-check them on an upgrade): the
+    sidebar inherits every dark key it does not override, its background
+    falling back to secondaryBackgroundColor; the primary button's label is
+    white; the prompt field and the progress track are
+    secondaryBackgroundColor, the progress fill primaryColor; links are
     linkColor, else blueTextColor; st.caption draws at 0.6 opacity; and
-    st.error/warning/info draw red/yellow/blue *BackgroundColor (translucent)
-    under *TextColor, falling back to _STOCK_DARK_ALERTS. Scope: this reads the
-    committed file, so it cannot see a theme injected at runtime
-    (STREAMLIT_THEME_*, ~/.streamlit), nor the one light-mode cost a custom
-    theme carries (the Run progress bar turns primary red; see config.toml).
+    st.error/warning/info draw red/yellow/blue *BackgroundColor (translucent
+    in this config, opaque in 1.67's stock) under *TextColor, falling back to
+    _STOCK_DARK_ALERTS. Scope: this reads the committed file, so it cannot see
+    a theme injected at runtime (STREAMLIT_THEME_*, ~/.streamlit), nor the one
+    light-mode cost a custom theme carries (the Run progress bar turns the
+    stock light primary instead of stock's blue; see CLAUDE.md).
     """
 
     def test_only_the_dark_tables_are_declared(self):
@@ -311,7 +315,7 @@ class TestThemeConfig:
 
     def test_run_button_meets_wcag_aa(self):
         # Streamlit draws the primary button's label white on primaryColor --
-        # stock #FF4B4B gave 3.30:1. The button must also stand out from the
+        # 1.64's stock #FF4B4B gave 3.30:1. The button must also stand out from the
         # page, and as the prompt field's focus border and the progress fill
         # it sits on secondaryBackgroundColor.
         dark, _ = _load_dark_theme()
@@ -335,7 +339,7 @@ class TestThemeConfig:
     def test_caption_links_meet_wcag_aa_through_the_caption_opacity(self):
         # The app's only links are in the sidebar's model caption. Unset, a
         # link is the theme's blueTextColor, which measured 2.77:1 through the
-        # caption's opacity on stock dark.
+        # caption's opacity on 1.64's stock dark.
         dark, sidebar = _load_dark_theme()
         link = sidebar.get("linkColor", dark.get("linkColor"))
         assert link is not None, "linkColor unset: links fall back to blueTextColor"
@@ -346,9 +350,10 @@ class TestThemeConfig:
 
     def test_alert_text_contrast_meets_wcag_aa(self):
         # Every alert the app draws, on each surface it draws on, whether or
-        # not the config restyles its hue: an unset key is stock, and stock red
-        # measures 4.40:1 on a #1E1E1E page. Alert fills are translucent, so
-        # the text is measured against the fill composited onto the surface.
+        # not the config restyles its hue: an unset key is stock (1.64's stock
+        # red measured 4.40:1 on a #1E1E1E page; 1.67's is 6.38:1). A fill may
+        # be translucent, so the text is measured against the fill composited
+        # onto the surface.
         dark, sidebar = _load_dark_theme()
         surfaces = {
             "page": dark["backgroundColor"],

@@ -176,16 +176,21 @@ def test_generate_token_ids_hold_only_the_completion(app):
 
 def test_tokenizer_decode_drops_the_grounding_markers(app):
     """The contract upsample_prompt's marker stripping rests on, checked on
-    the real tokenizer: mlx-vlm skips only ``all_special_ids``, which misses
-    the grounding markers, while ``decode(skip_special_tokens=True)`` drops
-    them. If the first half stops holding, the workaround is dead weight; if
-    the second does, markers reach FLUX.
+    the real tokenizer: ``decode(skip_special_tokens=True)`` drops the
+    grounding markers and ``<|im_end|>``. If it stops holding, markers reach
+    FLUX.
+
+    mlx-vlm's ``result.text`` skips only ``all_special_ids``. Up to
+    transformers 5.17 that held 2 of Qwen3-VL's 14 special tokens, so the
+    markers leaked; from 5.18.0 it holds all 14 (bisected 2026-11-12), so
+    on the current lock ``result.text`` is clean too. The ``token_ids``
+    decode is kept anyway: nothing floors transformers at 5.18, and it
+    costs nothing. So this test no longer asserts the leak itself.
     """
     _, processor, _ = app._get_vlm()
     tok = processor.tokenizer
     markers = ["<|object_ref_start|>", "<|object_ref_end|>", "<|box_start|>"]
     marker_ids = tok.convert_tokens_to_ids(markers)
-    assert not set(marker_ids) & set(tok.all_special_ids)
     ids = (
         tok.encode("A", add_special_tokens=False)
         + marker_ids[:1]
