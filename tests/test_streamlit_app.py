@@ -1922,7 +1922,7 @@ class TestUIWidgets:
         mock_model.generate_image.side_effect = RuntimeError("backend exploded")
         with _patched_models(mock_model, mock_model) as (app, _generate):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             # A generation failure is surfaced, not raised as an uncaught crash.
             assert not at.exception
@@ -1973,12 +1973,12 @@ class TestUIWidgets:
             at = app.run(timeout=10)
             # The placeholder shows before any run.
             assert any("appear here" in m.value for m in at.markdown)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             # Disable randomize + fix the seed for a deterministic caption.
             next(t for t in at.toggle if t.label == "Randomize seed").set_value(
                 False
             ).run(timeout=10)
             at.number_input[0].set_value(123).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             assert at.session_state["result_image"] is not None
@@ -2008,8 +2008,8 @@ class TestUIWidgets:
             mock_generate,
         ):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             # The enhanced prompt reaches the model and the banner shows it.
             assert (
@@ -2032,7 +2032,7 @@ class TestUIWidgets:
                 (f"p{i}", ()): f"e{i}" for i in range(32)
             }
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
-            at.text_input(key="prompt_input").set_value("fresh prompt").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("fresh prompt")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             cache = at.session_state["_enhance_cache"]
             assert len(cache) == 32  # stays bounded
@@ -2154,7 +2154,7 @@ class TestUIWidgets:
             at = app.run(timeout=10)
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert any("Enter a prompt" in w.value for w in at.main.warning)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert any("failed" in e.value.lower() for e in at.main.error)
             assert len(at.sidebar.error) == 0
@@ -2170,8 +2170,8 @@ class TestUIWidgets:
         with _patched_models(mock_model, mock_model) as (app, vlm_generate):
             vlm_generate.side_effect = RuntimeError("vlm down")
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             assert any("Prompt enhancement failed" in w.value for w in at.main.warning)
@@ -2187,12 +2187,12 @@ class TestUIWidgets:
             _generate,
         ):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
             at.toggle(key="auto_enhance_toggle").set_value(True).run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert any("ENHANCED a cat" in i.value for i in at.main.info)
             mock_model.generate_image.side_effect = RuntimeError("backend exploded")
-            at.text_input(key="prompt_input").set_value("a dog").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a dog")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             at.run(timeout=10)
             assert not any("Enhanced prompt" in i.value for i in at.main.info)
@@ -2227,7 +2227,7 @@ class TestUIWidgets:
         mock_model.generate_image.side_effect = _two_steps_then_freeze
         with _patched_models(mock_model, mock_model) as (app, _generate):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             frame = _canvas_frame(at)
@@ -2254,7 +2254,7 @@ class TestUIWidgets:
         )
         with _patched_models(mock_model, mock_model) as (app, _generate):
             at = app.run(timeout=10)
-            at.text_input(key="prompt_input").set_value("a cat").run(timeout=10)
+            at.text_input(key="prompt_input").set_value("a cat")
             next(b for b in at.button if b.label == "Run").click().run(timeout=10)
             assert not at.exception
             assert _canvas_frame(at).proto.width_config.pixel_width == (

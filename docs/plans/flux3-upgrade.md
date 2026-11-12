@@ -573,6 +573,25 @@ current FLUX.2 model**, so any breakage is attributable to the toolchain alone.
 Two commits, mflux then everything else, so a smoke regression can be bisected
 to one side or the other. Starts from Phase 1a merged; one session.
 
+> **Deviation found at the start of Phase 1b (2026-11-12).** mflux **0.24.0**
+> shipped on 2026-10-27, after this plan, and declares `pillow>=13.0.0`. So:
+> - `uv lock --upgrade-package mflux` resolves 0.24.0, not 0.23.0, and drags
+>   **Pillow 12.3.0 → 13.0.0** and **Streamlit 1.64.0 → 1.67.0** with it
+>   (Streamlit 1.64 declares `pillow<13`; 1.67 allows `<14`). mlx stays at
+>   0.32.2 until step 2.
+> - The `pillow<13` cap is **dropped, by this plan's own step-2 rule**: no 13.0.x
+>   fix has shipped and `import PIL._typing` still fails on 3.12, but mflux 0.24
+>   no longer reaches it (its `utils/exif_orientation.py` defines the alias
+>   itself: "Pillow 13 only imports [PIL._typing] on Python 3.15+").
+>   `import mflux.models.flux2.variants` and `…flux3.variants` both pass on
+>   3.12.15, and every public `PIL.*` module imports (FPX/MIC fail only on the
+>   optional `olefile`, as on 12.x). A cap would now also hold mflux at 0.23.
+> - Commit 1 therefore carries mflux 0.24 with its forced co-movers and the
+>   form-gating test fix (the 9 failures arrive with Streamlit, here at 1.67).
+>   Commit 2 still isolates mlx, mlx-vlm, transformers and the rest.
+> - The mflux 0.23 Facts above (FLUX 3 classes, signatures, `image_paths`,
+>   `prompt_cache`) were read on 0.23.0; **Phase 2 re-reads them on 0.24**.
+
 1. **mflux alone.** `uv lock --upgrade-package mflux`. Confirm in the diff that mflux becomes 0.23.0
    and mlx 0.32.4, and that **Pillow does not move**. Gates, then
    **`uv run pytest -m smoke`** on real FLUX.2 weights. Watch most
