@@ -318,6 +318,22 @@ them. Already cached and reusable: `mlx-community/Qwen3-VL-2B-Instruct-8bit`
 | Phase 2, if needed | + Q6 7.6 GB and/or Qwen3-VL-4B-8bit ~5 GB | 8–15 GB, **below the floor**: needs the owner's answer on what to free (Rules) |
 | After Phase 2 merges | − FLUX.2 8.6 GB, − whichever quant and VLM lost | back above 30 GB |
 
+**Measured 2026-11-12 (Phase 1a), and the squeeze above is gone.** Before
+the golden run `df -h ~` showed **226 GiB free (49% used)**; after it, 212 GiB
+(51%). The uv cache had fallen from 11 GB to **55 MB** and the disk had been
+cleared outside these sessions. `hf cache ls`: 26 repos, 27 revisions, 84.0 GB.
+`mlx-community/flux2-klein-4b-8bit` is 8.6 GB at `9beac1a3` (ref `main`), the
+eval outputs 26 MB for two runs, `.venv` 1.6 GB, and no `.incomplete` files.
+The table above is kept as planned. Every Phase 2 row now lands far above the
+15 GB floor, so the "what to free" question before Phase 2's first download
+is no longer forced (the owner may still choose to free things). The
+`hf cache prune --dry-run` figure grew to 66.2 GB (18 revisions).
+
+**Phase 2 should re-size its download.** mflux fetches only the weight files,
+and the cache treats the result as an incomplete snapshot. Pinning through
+`snapshot_download(..., revision=)` fetches the *whole* repo, so take the size
+from the full file listing, not the safetensors alone.
+
 ### How the HF cache stores files (verified 2026-10-21, huggingface_hub 1.32.0)
 
 - **One content-addressed pool.** File bodies live in a shared `hub/blobs/<xx>/<sha256>` (61 GB). A repo's own `blobs/` holds only symlinks into it, so `du` on a `models--…` folder reports megabytes (4.4 MB for the 5.8 GB Qwen3-VL-8B). **Size repos with `hf cache ls`, never `du`.**
@@ -432,6 +448,33 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 - The threshold is a starting point. Record the actual differences from Phase 1a's repeat run (same versions) and Phase 1b's comparison (new versions), and tune it from those.
 
 ## Phase 1a: hygiene and evaluation baseline (`chore/hygiene-and-eval`)
+
+**Status: done 2026-11-12** on `chore/hygiene-and-eval`, awaiting the owner's
+merge and CI. Deviations from the steps below:
+- The local uv had drifted to 0.13.7. It was downgraded to the 0.13.4 pin
+  rather than re-locking, since the lock could not move before the golden run.
+- `hf cache prune` turned out to delete every revision no branch or tag points
+  at, not "every revision but the newest"; the hook and docs say so.
+- The hook allows `--help` and treats `--no-dry-run` as a deny.
+- The example images were replaced (step 4).
+- The app gained `DEFAULT_SIZE`/`DEFAULT_AUTO_ENHANCE` so the runner reads
+  the shipped defaults, and the runner got `--upsampling on|off` for the
+  latency section's upsampling-off figure.
+- **Results** (FLUX.2 `9beac1a3`, mflux 0.20.0, mlx 0.32.2, M2 Max 32 GB,
+  outputs in `~/Library/Application Support/flux-image/eval/`):
+  - `golden-flux2-0.9.0` and `repeat-flux2-0.9.0-2026-11-12` are
+    **bit-identical on all 10 cases**: same pixel hash, 0.0000% drift.
+  - Warm 1024² text-to-image Run, median of 3: 27.3 s (golden), 28.25 s
+    (repeat). Cold first Run with cached weights: 31.0 s. Edit-pipeline
+    load: 3.4 s.
+  - Edits: the 2-reference case 7 takes ~75 s (~18 s/step) and the
+    single-reference edits 40–56 s.
+  - Peak MLX memory: 17.4 GB text-to-image, up to 20.9 GB edit.
+  - The golden manifest carries an `amendments` entry. Its revision was
+    filled in after the run, and the 426 s cold figure includes the download.
+- **For the owner, ahead of Phase 2:** FLUX.2's own 2-reference edit
+  already exceeds 60 s (75 s). The latency section asks for edit numbers above
+  60 s to come to you rather than be assumed covered.
 
 Goal: put the guards and the measuring stick in place **before anything moves**.
 That means the cache guard hook, the `.gitignore` safety net, and the evaluation
@@ -969,7 +1012,7 @@ come from:
 7. Does Streamlit 1.66.1 keep 1.64's canvas geometry and theme behavior, or do the fold constants need retuning? (Phase 1b step 3)
 8. Has Pillow fixed 13.0's `_IntegralLike` import, so the `<13` cap can go? (Phase 1b step 2; re-check before release)
 9. Does FLUX 3 at 16 steps fit 60 s on the M2 Max, and if not, which lever passes both the time and the quality gate? (Phase 2, Evaluation)
-10. Is a 2% mean-absolute-difference flag the right sensitivity, and is MLX output bit-identical on unchanged versions? (Phase 1a repeat run; Phase 1b drift check)
+10. Is a 2% mean-absolute-difference flag the right sensitivity? (Phase 1b drift check.) ~~Is MLX output bit-identical on unchanged versions?~~ Yes: Phase 1a's repeat run matched the golden run pixel for pixel on all 10 cases (2026-11-12). So on unchanged versions any drift at all is a signal, and the 2% threshold matters only across version bumps.
 
 ## Phase exit checklist
 
