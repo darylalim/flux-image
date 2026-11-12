@@ -31,3 +31,15 @@ dist/
 
 # macOS
 .DS_Store
+
+# Model weights and local data. Phase 2 downloads into the HF cache and
+# Phase 5 keeps history outside the repo; these catch a misconfigured path.
+# Never add *.png or *.webp: the README hero and examples/ must stay tracked.
+*.safetensors
+*.gguf
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
