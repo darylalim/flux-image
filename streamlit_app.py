@@ -60,7 +60,7 @@ VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 # size.longest_edge=16777216), unlike SmolVLM's 512px tiling. Measured: a
 # 4032x3024 phone photo costs 11987 prompt tokens and 50s of prefill
 # against 575 tokens and 0.7s at 768px, with identical subject coverage
-# across 768/1024/full-res on the bundled 3-image example.
+# across 768/1024/full-res on the 3-image example bundled at the time.
 VLM_MAX_IMAGE_SIZE = 768
 
 # Generation cap. Named so the guard below cannot drift from the kwarg: a
@@ -86,6 +86,11 @@ DEFAULT_STEPS = 4
 # because mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
 GUIDANCE = 1.0
 
+# Shipped defaults the UI seeds its widgets with. Module constants rather than
+# literals in the UI block, so eval/run_eval.py measures what users get.
+DEFAULT_SIZE = 1024
+DEFAULT_AUTO_ENHANCE = False
+
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
     "Photorealistic infographic showing the complete Berlin TV Tower (Fernsehturm) from ground base to antenna tip, full vertical view with entire structure visible including concrete shaft, metallic sphere, and antenna spire. Slight upward perspective angle looking up toward the iconic sphere, perfectly centered on clean white background. Left side labels with thin horizontal connector lines: the text '368m' in extra large bold dark grey numerals (#2D3748) positioned at exactly the antenna tip with 'TOTAL HEIGHT' in small caps below. The text '207m' in extra large bold with 'TELECAFÉ' in small caps below, with connector line touching the sphere precisely at the window level. Right side label with horizontal connector line touching the sphere's equator: the text '32m' in extra large bold dark grey numerals with 'SPHERE DIAMETER' in small caps below. Bottom section arranged in three balanced columns: Left - Large text '986' in extra bold dark grey with 'STEPS' in caps below. Center - 'BERLIN TV TOWER' in bold caps with 'FERNSEHTURM' in lighter weight below. Right - 'INAUGURATED' in bold caps with 'OCTOBER 3, 1969' below. All typography in modern sans-serif font (such as Inter or Helvetica), color #2D3748, clean minimal technical diagram style. Horizontal connector lines are thin, precise, and clearly visible, touching the tower structure at exact corresponding measurement points. Professional architectural elevation drawing aesthetic with dynamic low angle perspective creating sense of height and grandeur, poster-ready infographic design with perfect visual hierarchy.",
@@ -95,14 +100,17 @@ EXAMPLE_PROMPTS = [
 
 _EXAMPLES_DIR = Path(__file__).resolve().parent / "examples"
 
-# Editing examples as (prompt, [image paths]) from the FLUX.2 [klein] space.
+# Editing examples as (prompt, [image paths]). The images are BFL's own
+# generations from github.com/black-forest-labs/flux-3-image-klein (Apache-2.0,
+# examples/inputs/2.png and 3.png at bfc8889). mug.webp is 2.png cropped to 3:4
+# so the example also exercises portrait sizing; retriever.webp is 3.png as is.
+# The prompt is the two-reference edit from that repo's examples/README.md.
 EDIT_EXAMPLES = [
     (
-        "The person from image 1 is petting the cat from image 2, the bird from image 3 is next to them",
+        "Print the dog from image 2 onto the mug in image 1",
         [
-            str(_EXAMPLES_DIR / "woman1.webp"),
-            str(_EXAMPLES_DIR / "cat_window.webp"),
-            str(_EXAMPLES_DIR / "bird.webp"),
+            str(_EXAMPLES_DIR / "mug.webp"),
+            str(_EXAMPLES_DIR / "retriever.webp"),
         ],
     ),
 ]
@@ -573,8 +581,8 @@ if __name__ == "__main__":
 
         final_prompt = prompt
 
-        st.session_state.setdefault("width_slider", 1024)
-        st.session_state.setdefault("height_slider", 1024)
+        st.session_state.setdefault("width_slider", DEFAULT_SIZE)
+        st.session_state.setdefault("height_slider", DEFAULT_SIZE)
         st.session_state.setdefault("steps_slider", DEFAULT_STEPS)
 
         # The three sliders below are instantiated on every run — two
@@ -590,7 +598,7 @@ if __name__ == "__main__":
         with st.expander("Advanced settings", icon=":material/tune:", expanded=False):
             auto_enhance = st.toggle(
                 "Prompt upsampling",
-                value=False,
+                value=DEFAULT_AUTO_ENHANCE,
                 key="auto_enhance_toggle",
             )
             st.caption("Automatically enhance the prompt using a VLM")

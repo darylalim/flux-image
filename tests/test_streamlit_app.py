@@ -1549,6 +1549,20 @@ class TestStreamlitApp:
             at = app.run(timeout=10)
             assert at.slider(key="steps_slider").value == streamlit_app.DEFAULT_STEPS
 
+    def test_widgets_start_at_the_shipped_default_constants(self):
+        # eval/run_eval.py reads these constants to run "as shipped"; a widget
+        # seeded from a literal instead would let the two drift apart silently.
+        import streamlit_app
+
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert at.slider(key="width_slider").value == streamlit_app.DEFAULT_SIZE
+            assert at.slider(key="height_slider").value == streamlit_app.DEFAULT_SIZE
+            assert (
+                at.toggle(key="auto_enhance_toggle").value
+                == streamlit_app.DEFAULT_AUTO_ENHANCE
+            )
+
     def test_steps_slider_still_allows_long_runs(self):
         # Losing the Base preset must not lose the ability to run many steps.
         # Assert the value reaches generate_image() — merely reading the slider
@@ -1597,8 +1611,8 @@ class TestStreamlitApp:
             at = app.run(timeout=10)
             edit_example = at.button(key="edit_example_0")
             edit_example.click().run(timeout=10)
-            assert "petting" in (at.text_input(key="prompt_input").value or "")
-            assert len(at.session_state["example_images"]) == 3
+            assert "onto the mug" in (at.text_input(key="prompt_input").value or "")
+            assert len(at.session_state["example_images"]) == 2
 
 
 class _FakeSessionState(dict):
@@ -1695,7 +1709,8 @@ class TestExamplesAndLabels:
         assert len(streamlit_app.EDIT_EXAMPLES) == 1
         for prompt, images in streamlit_app.EDIT_EXAMPLES:
             assert isinstance(prompt, str) and prompt.strip()
-            assert isinstance(images, list) and len(images) == 3
+            # Multi-image: the example exists to show compositing across inputs.
+            assert isinstance(images, list) and len(images) >= 2
             for image_path in images:
                 assert Path(image_path).is_file()
 
@@ -1919,9 +1934,9 @@ class TestUIWidgets:
         with _app_test() as app:
             at = app.run(timeout=10)
             # Loading an editing example sizes the sliders from the image
-            # (woman1.webp is 512x768 -> 672x1024).
+            # (mug.webp is 768x1024 -> 768x1024).
             at.button(key="edit_example_0").click().run(timeout=10)
-            assert at.slider(key="width_slider").value == 672
+            assert at.slider(key="width_slider").value == 768
             assert at.slider(key="height_slider").value == 1024
             # A manual width (distinct from any auto value) must survive clearing
             # the images, not reset to 1024.
@@ -2069,6 +2084,8 @@ class TestUIWidgets:
         key the manual-upload override would pop the example images on the
         same rerun the example callback set them.
         """
+        import streamlit_app
+
         with _app_test() as app:
             at = app.run(timeout=10)
             buf = io.BytesIO()
@@ -2077,7 +2094,10 @@ class TestUIWidgets:
             at.button(key="edit_example_0").click().run(timeout=10)
             assert not at.exception
             # A fresh (renamed) uploader renders empty, so the example survives…
-            assert len(at.session_state["example_images"]) == 3
+            assert (
+                at.session_state["example_images"]
+                == (streamlit_app.EDIT_EXAMPLES[0][1])
+            )
             # …and the input panel was opened via the keyed expander state.
             assert at.session_state["input_expander"] is True
 
@@ -2264,8 +2284,8 @@ class TestUIWidgets:
             # canvas follows it and says what is being edited.
             at.button(key="edit_example_0").click().run(timeout=10)
             placeholder = next(m for m in at.main.markdown if "appear here" in m.value)
-            assert "672 × 1024" in placeholder.value
-            assert "Editing 3 input images" in placeholder.value
+            assert "768 × 1024" in placeholder.value
+            assert "Editing 2 input images" in placeholder.value
             assert _canvas_frame(at).proto.width_config.pixel_width == (
-                streamlit_app._canvas_display_width(672, 1024)
+                streamlit_app._canvas_display_width(768, 1024)
             )

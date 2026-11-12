@@ -14,7 +14,7 @@ Phase 1a  hygiene + baseline      cache guard, .gitignore, example licenses, eva
 Phase 1b  toolchain               mflux 0.23 → everything latest (pillow<13), Streamlit 1.66 re-verify
    │       gate: four gates, smoke, drift check vs FLUX.2 golden, CI
 Phase 2   FLUX 3 swap (feat!)     one model instance, pinned FLUX + VLM, BFL upsampling, license
-   │       gate: peak ≤ 26 GB AND time ≤ 60 s AND quality ≥ FLUX.2  ──► none passes: ABORT
+   │       gate: peak ≤ 26 GB AND time (t2i ≤ 60 s, edits ≤ 2× FLUX.2) AND quality ≥ FLUX.2  ──► none passes: ABORT
    │                                                                     (ship 1a/1b/3 as 0.9.1)
 Phase 3   Darkroom rebrand        name, light theme, screenshots
    │       gate: four gates, CI
@@ -318,6 +318,22 @@ them. Already cached and reusable: `mlx-community/Qwen3-VL-2B-Instruct-8bit`
 | Phase 2, if needed | + Q6 7.6 GB and/or Qwen3-VL-4B-8bit ~5 GB | 8–15 GB, **below the floor**: needs the owner's answer on what to free (Rules) |
 | After Phase 2 merges | − FLUX.2 8.6 GB, − whichever quant and VLM lost | back above 30 GB |
 
+**Measured 2026-11-12 (Phase 1a), and the squeeze above is gone.** Before
+the golden run `df -h ~` showed **226 GiB free (49% used)**; after it, 212 GiB
+(51%). The uv cache had fallen from 11 GB to **55 MB** and the disk had been
+cleared outside these sessions. `hf cache ls`: 26 repos, 27 revisions, 84.0 GB.
+`mlx-community/flux2-klein-4b-8bit` is 8.6 GB at `9beac1a3` (ref `main`), the
+eval outputs 26 MB for two runs, `.venv` 1.6 GB, and no `.incomplete` files.
+The table above is kept as planned. Every Phase 2 row now lands far above the
+15 GB floor, so the "what to free" question before Phase 2's first download
+is no longer forced (the owner may still choose to free things). The
+`hf cache prune --dry-run` figure grew to 66.2 GB (18 revisions).
+
+**Phase 2 should re-size its download.** mflux fetches only the weight files,
+and the cache treats the result as an incomplete snapshot. Pinning through
+`snapshot_download(..., revision=)` fetches the *whole* repo, so take the size
+from the full file listing, not the safetensors alone.
+
 ### How the HF cache stores files (verified 2026-10-21, huggingface_hub 1.32.0)
 
 - **One content-addressed pool.** File bodies live in a shared `hub/blobs/<xx>/<sha256>` (61 GB). A repo's own `blobs/` holds only symlinks into it, so `du` on a `models--…` folder reports megabytes (4.4 MB for the 5.8 GB Qwen3-VL-8B). **Size repos with `hf cache ls`, never `du`.**
@@ -356,7 +372,7 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 | Code | Four gates + Stop hook + CI per phase | All green (existing) |
 | Real surface | `pytest -m smoke` | Green before each phase merge (existing) |
 | Memory / disk | `phys_footprint`, `df` | ≥ 6 GB / ≥ 15 GB free (existing) |
-| **Time** | Latency script, below | **≤ 60 s** warm text-to-image Run (new) |
+| **Time** | Latency script, below | **≤ 60 s** warm text-to-image Run; **edits ≤ 2× FLUX.2** per case (new) |
 | **Quality** | Scored evaluation set, below | FLUX 3 ≥ FLUX.2, no zero scores (new) |
 | **Drift** | Golden runs + pixel/text diff | Flags for review; never auto-fails (new) |
 
@@ -364,7 +380,17 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 
 - **Budget: ≤ 60 s for one 1024² text-to-image Run, warm, upsampling on.** Warm means the models are loaded and the prompt cache has been primed by the load-time warm-up. The budget is the owner's (2026-10-21).
 - **What is timed:** wall clock from the Run submit to the result drawn, which is `_resolve_prompt` plus `infer()`. Take the median of 3 Runs after one discarded warm Run, at fixed seeds.
-- **Recorded, not gated:** an edit with 3 references; upsampling off; the cold first Run of a server (model load plus the warm-up, ~30 s of it on 8B). If an edit exceeds 60 s, bring the numbers to the owner rather than assuming the budget covers edits.
+- **Edit budget: each edit case ≤ 2× FLUX.2's time on the same case, both as shipped** (decided by the owner 2026-11-12, after Phase 1a measured FLUX.2's own 2-reference edit at ~75 s, over 60 s). An absolute 60 s would ask FLUX 3, at 16 steps, to edit faster than the app does today, and no budget at all would let a multi-minute edit ship undecided. The baseline is `repeat-flux2-0.9.0-2026-11-12` (pipeline already loaded):
+
+  | Case | FLUX.2 | Budget (2×) |
+  |---|---|---|
+  | 7, 2-reference example, 768×1024 | 74.9 s | ≤ 149.8 s |
+  | 8, 1 reference, 768×1024 | 40.4 s | ≤ 80.8 s |
+  | 9, 1 reference, 1024² | 56.3 s | ≤ 112.6 s |
+  | 10, 1 reference, 1024² | 56.2 s | ≤ 112.4 s |
+
+  FLUX 3's figure for a case is the median of 3 warm Runs at that case's seed, with the edit pipeline loaded. The same levers apply in the same order, each re-scored. A lever that changes the default size changes edits only where the size comes from the slider, not from the references, so for edits the step lever is the one that moves the number.
+- **Recorded, not gated:** upsampling off; the cold first Run of a server (model load plus the warm-up, ~30 s of it on 8B).
 - **Baseline:** Phase 1b records FLUX.2's timings as shipped (4 steps, upsampling off by default) on the upgraded toolchain, so the Phase 2 numbers can be read against what users have today.
 - **If it fails, the levers in order:**
   1. `DEFAULT_STEPS` 16 → 12;
@@ -388,12 +414,12 @@ detection. It gates Phase 2's merge alongside the Memory budget.
     
     Cases 1–4 are the app's `EXAMPLE_PROMPTS`, verbatim.
   - **Edits (4):**
-    7. the three-reference composition, `EDIT_EXAMPLES[0]`;
-    8. "make it snowy" on `cat_window` (a change that preserves the scene);
-    9. "turn this into a watercolor painting" on `woman1` (style, identity kept);
-    10. "replace the bird with a hummingbird" on `bird` (object swap).
+    7. the two-reference composition, `EDIT_EXAMPLES[0]` ("Print the dog from image 2 onto the mug in image 1");
+    8. "make it snowy outside the window" on `mug` (a change that preserves the scene);
+    9. "turn this into a watercolor painting" on `retriever` (style, identity kept);
+    10. "replace the golden retriever with a black labrador" on `retriever` (object swap, the beach unchanged).
     
-    The edit cases use whichever images Phase 1a's license check leaves in `examples/`. That check runs **before** the FLUX.2 golden run, so both versions are scored on the same inputs.
+    The edit cases use the images Phase 1a's license check left in `examples/`: BFL's Apache-2.0 `mug.webp` (768×1024) and `retriever.webp` (1024²), which replaced the unlicensed Space images (see Phase 1a step 4). That check ran **before** the FLUX.2 golden run, so both versions are scored on the same inputs.
 - **Run as shipped,** with each version's shipped defaults: steps, default size and upsampling. For FLUX 3, upsampling is on; for the FLUX.2 baseline it is off, its default. The "1024²" above is today's default. If Phase 2 adopts the 768² time lever, FLUX 3 is evaluated at 768², because that is what users would get. Record each enhanced prompt. Upsampling is greedy, so the enhanced prompt is deterministic per version and is part of the output.
 - **Where things live:**
   - Tracked: `eval/cases.json` (prompts, references, seeds, sizes) and `eval/run_eval.py`. The script imports `streamlit_app`'s `infer`/`_resolve_prompt`, so it measures the app's real path, and also prints the latency figures above. It needs real weights, so it is not part of `pytest`. ruff and ty cover it as they do every tracked `.py`. Add `eval/` to CLAUDE.md's Architecture table.
@@ -432,6 +458,32 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 - The threshold is a starting point. Record the actual differences from Phase 1a's repeat run (same versions) and Phase 1b's comparison (new versions), and tune it from those.
 
 ## Phase 1a: hygiene and evaluation baseline (`chore/hygiene-and-eval`)
+
+**Status: done 2026-11-12** on `chore/hygiene-and-eval`, awaiting the owner's
+merge and CI. Deviations from the steps below:
+- The local uv had drifted to 0.13.7. It was downgraded to the 0.13.4 pin
+  rather than re-locking, since the lock could not move before the golden run.
+- `hf cache prune` turned out to delete every revision no branch or tag points
+  at, not "every revision but the newest"; the hook and docs say so.
+- The hook allows `--help` and treats `--no-dry-run` as a deny.
+- The example images were replaced (step 4).
+- The app gained `DEFAULT_SIZE`/`DEFAULT_AUTO_ENHANCE` so the runner reads
+  the shipped defaults, and the runner got `--upsampling on|off` for the
+  latency section's upsampling-off figure.
+- **Results** (FLUX.2 `9beac1a3`, mflux 0.20.0, mlx 0.32.2, M2 Max 32 GB,
+  outputs in `~/Library/Application Support/flux-image/eval/`):
+  - `golden-flux2-0.9.0` and `repeat-flux2-0.9.0-2026-11-12` are
+    **bit-identical on all 10 cases**: same pixel hash, 0.0000% drift.
+  - Warm 1024² text-to-image Run, median of 3: 27.3 s (golden), 28.25 s
+    (repeat). Cold first Run with cached weights: 31.0 s. Edit-pipeline
+    load: 3.4 s.
+  - Edits: the 2-reference case 7 takes ~75 s (~18 s/step) and the
+    single-reference edits 40–56 s.
+  - Peak MLX memory: 17.4 GB text-to-image, up to 20.9 GB edit.
+  - The golden manifest carries an `amendments` entry. Its revision was
+    filled in after the run, and the 426 s cold figure includes the download.
+- **Decided by the owner:** FLUX.2's own 2-reference edit already exceeds
+  60 s (75 s), so edits get their own gate: ≤ 2× FLUX.2 per case (Latency budget).
 
 Goal: put the guards and the measuring stick in place **before anything moves**.
 That means the cache guard hook, the `.gitignore` safety net, and the evaluation
@@ -501,6 +553,7 @@ before Phase 1b.
    only pre-upgrade baseline, so the images must be final before it.
    - Find the FLUX.2 [klein] Space's license and the images' origin, and record both in the README.
    - If either can't be confirmed, replace them now with BFL's Apache-2.0 `examples/inputs/` or images the owner made. Update `EDIT_EXAMPLES` and its provenance comment, and re-run the tests that pin the example dimensions (e.g. woman1's 512×768 → 672×1024).
+   - **Done 2026-11-12: replaced.** The origin was confirmed (all three files byte-identical to `black-forest-labs/FLUX.2-klein-4B`'s), but the Space declares no license: no `license:` key, no LICENSE file, no author for the images. `inputs/1.png` in BFL's repo was skipped too, since nothing documents where it came from. `2.png` (mug) and `3.png` (golden retriever) are documented outputs of BFL's CLI with their seeds, so they became `mug.webp` (cropped to 3:4, so the example still exercises portrait sizing: 768×1024) and `retriever.webp`. BFL's LICENSE is vendored as `examples/LICENSE`, and the prompt is BFL's own two-reference edit.
    - Commit `docs(examples): record the example images' license` or `chore(examples): replace unlicensed example images`.
    
    This makes Phase 1a four commits.
@@ -561,7 +614,7 @@ Phase 2 merges only if **one combination** of FLUX build (Q8, Q6) and VLM rung
 target machine:
 
 1. **Memory:** peak `phys_footprint` ≤ 26 GB over the budget's sequence, with Runs serialized (Memory budget).
-2. **Time:** ≤ 60 s warm text-to-image (Latency budget).
+2. **Time:** ≤ 60 s warm text-to-image, and each edit case ≤ 2× FLUX.2's time (Latency budget).
 3. **Quality:** FLUX 3's image total ≥ FLUX.2's, no zero scores, and no zero on the upsampled-prompt row (Evaluation).
 
 The time levers (12 steps, a 768² default) count as part of a combination, each
@@ -641,7 +694,7 @@ that passes all three**, not the best on any one gate.
   update any that assume the default is off.
 - **Switch `VLM_MODEL_ID` to `mlx-community/Qwen3-VL-8B-Instruct-4bit`**, pinned with `VLM_REVISION` (Weight pinning; Decisions)
   and walk the fallback order against the memory budget. Measure each combination
-  with both models resident: a t2i Run, then an i2i Run with 3 references, then a
+  with both models resident: a t2i Run, then the 2-reference example edit, then a
   t2i Run again, which also exercises APC eviction.
   - If falling back to 4B-8bit, re-check medium and grounding on the four cases in Facts with the appendix script (pass the model id as the third argument).
   - Record the chosen pair, its footprint and its latencies in CLAUDE.md, replacing the 2B-era Qwen3-VL gotchas that no longer apply (sampling parameters, the 120-word cap, the "prompt wording does not fix it" note).
@@ -694,7 +747,7 @@ permissive", FLUX.2 "Apache-2.0") is false. The fix ships in that commit:
   
   Add a `tests/test_readme.py` assertion that the section exists and names `hf cache rm`.
 - **Evaluation gates** (Evaluation section), alongside the Memory budget, before merge:
-  - the latency budget, ≤ 60 s warm text-to-image;
+  - the latency budget, ≤ 60 s warm text-to-image and edits ≤ 2× FLUX.2 per case;
   - the quality gate on the 10-case set: FLUX 3's image total ≥ FLUX.2's (the four image rows only), no zero scores, scored blind from the contact sheet;
   - every VLM rung considered is scored too.
   
@@ -702,10 +755,9 @@ permissive", FLUX.2 "Apache-2.0") is false. The fix ships in that commit:
 - **Keep `eval/run_eval.py` working across the swap.** Phase 1a wrote it against FLUX.2's `infer()`, and this phase drops `guidance`, routes both modes through one instance, and changes the defaults.
   - The runner should call only the app's public path (`_resolve_prompt` and `infer()`, with the shipped defaults read from the app's constants). It should never call the getters or pass model-specific keywords, so that the swap needs no runner change beyond what `infer()`'s signature forces.
   - Re-run it on the Phase 1b lock (FLUX.2) once after any runner change, to confirm it still reproduces `golden-flux2-0.9.0` before scoring FLUX 3 against that baseline.
-- `EDIT_EXAMPLES` comment says "from the FLUX.2 [klein] space". Check they still give
-  sensible edits; consider BFL's own examples (`examples/inputs/`, Apache-2.0) if not.
-  Their license was settled in Phase 1a. Replacing them now, for quality
-  rather than license, invalidates the edit cases' FLUX.2 baseline. If that
+- `EDIT_EXAMPLES` already uses BFL's own `examples/inputs/` images (Phase 1a).
+  Check the example still gives a sensible edit on FLUX 3. Replacing the images
+  now, for quality rather than license, invalidates the edit cases' FLUX.2 baseline. If that
   happens, re-capture those 4 cases on FLUX.2 *before* merging Phase 2, while
   the Phase 1b lock still runs it, and record why.
 - **Disk:** follow the Disk plan section.
@@ -968,8 +1020,8 @@ come from:
 6. Which rung of the VLM fallback order fits the memory budget, and does it pass the quality gate? (Phase 2 measurement + Evaluation)
 7. Does Streamlit 1.66.1 keep 1.64's canvas geometry and theme behavior, or do the fold constants need retuning? (Phase 1b step 3)
 8. Has Pillow fixed 13.0's `_IntegralLike` import, so the `<13` cap can go? (Phase 1b step 2; re-check before release)
-9. Does FLUX 3 at 16 steps fit 60 s on the M2 Max, and if not, which lever passes both the time and the quality gate? (Phase 2, Evaluation)
-10. Is a 2% mean-absolute-difference flag the right sensitivity, and is MLX output bit-identical on unchanged versions? (Phase 1a repeat run; Phase 1b drift check)
+9. Does FLUX 3 at 16 steps fit 60 s for text-to-image and 2× FLUX.2 for edits on the M2 Max, and if not, which lever passes both the time and the quality gate? (Phase 2, Evaluation)
+10. Is a 2% mean-absolute-difference flag the right sensitivity? (Phase 1b drift check.) ~~Is MLX output bit-identical on unchanged versions?~~ Yes: Phase 1a's repeat run matched the golden run pixel for pixel on all 10 cases (2026-11-12). So on unchanged versions any drift at all is a signal, and the 2% threshold matters only across version bumps.
 
 ## Phase exit checklist
 
@@ -1010,6 +1062,11 @@ Used for the 2026-10-21 measurements. Run with the repo's venv from a directory
 holding BFL's `pup_prompts_external_vlm.json`:
 
 `HF_HUB_OFFLINE=1 .venv/bin/python -I measure_pup.py pup_prompts_external_vlm.json .`
+
+The script names the original example images, which Phase 1a replaced. They
+remain in git history before the merge of `chore/hygiene-and-eval`; check them
+out to reproduce these figures, or swap in `mug.webp`/`retriever.webp` for new
+ones.
 
 ```python
 """Measure BFL's external-VLM upsampling prompts on Qwen3-VL-2B (mlx-vlm)."""

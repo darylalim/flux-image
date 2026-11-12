@@ -135,6 +135,82 @@ class TestNoSecretsInRepo:
         assert not offenders, f"secret-bearing files must never be tracked: {offenders}"
 
 
+def _ignored(rel_paths):
+    """The subset of ``rel_paths`` git's rules ignore, tracked or not.
+
+    ``--no-index`` asks the rules alone. Without it git reports a tracked file
+    as not ignored whatever the rules say, so a rule that would catch the README
+    hero on a fresh add would go unseen.
+    """
+    out = subprocess.run(
+        ["git", "-C", str(_REPO_ROOT), "check-ignore", "--no-index", "--stdin", "-z"],
+        input="\0".join(rel_paths) + "\0",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    # Exit 1 means "none ignored"; anything above it is an error, not an answer.
+    assert out.returncode in (0, 1), out.stderr
+    return {p for p in out.stdout.split("\0") if p}
+
+
+@_requires_git
+class TestIgnoreRules:
+    """Two-way: what must never be committed is ignored, and what the repo
+    relies on is not. Being ignored also means an edit no longer arms the Stop
+    hook's suite (mark-tests-pending.sh), so a too-wide rule fails silently."""
+
+    _MUST_BE_IGNORED = (
+        # Weights: a local_dir or HF_HOME pointed into the repo would stage GBs.
+        "model.safetensors",
+        "weights/transformer/diffusion_pytorch_model.safetensors",
+        "qwen3-vl.gguf",
+        # Databases: a stray history database would commit prompts in plain text.
+        "history.db",
+        "history.db-journal",
+        "history.db-wal",
+        "history.db-shm",
+        "history.sqlite",
+        "history.sqlite3",
+        # Secrets, mirroring guard-paths.sh.
+        ".env",
+        ".env.local",
+        ".streamlit/secrets.toml",
+    )
+
+    # Phase 2 adds its vendored upsampling JSON and LICENSE/NOTICE sidecar here
+    # once their paths are fixed.
+    _MUST_STAY_TRACKABLE = (
+        "docs/screenshot-dark.png",
+        "examples/mug.webp",
+        "examples/retriever.webp",
+        "examples/LICENSE",
+        "uv.lock",
+        ".python-version",
+        "pyproject.toml",
+        "streamlit_app.py",
+        ".streamlit/config.toml",
+        ".claude/settings.json",
+        ".claude/hooks/guard-cache.sh",
+        ".claude/hooks/guard-paths.sh",
+        *sorted(_ALLOWED_ENV_TEMPLATES),
+    )
+
+    def test_weights_databases_and_secrets_are_ignored(self):
+        missed = set(self._MUST_BE_IGNORED) - _ignored(self._MUST_BE_IGNORED)
+        assert not missed, f"not gitignored: {sorted(missed)}"
+
+    def test_the_assets_the_repo_relies_on_are_not_ignored(self):
+        caught = _ignored(self._MUST_STAY_TRACKABLE)
+        assert not caught, f"gitignored but must stay tracked: {sorted(caught)}"
+
+    def test_every_tracked_file_survives_the_rules(self):
+        # The general form of the test above: a rule that matches any file
+        # already in the repo means the next fresh clone and re-add drops it.
+        caught = _ignored(_tracked_files())
+        assert not caught, f"tracked files the rules would ignore: {sorted(caught)}"
+
+
 class TestSecretDetector:
     """The scan is only as good as its patterns, so prove they fire (and don't
     fire on lookalikes) — a broken or untested regex must not pass vacuously."""

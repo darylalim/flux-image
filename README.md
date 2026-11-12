@@ -49,12 +49,11 @@ The studio opens with input images, settings and examples in the sidebar, and a 
 
 **Text-to-image** — type a prompt, then press **Enter** or click **Run**. The generated image appears on the canvas, labeled with the seed used.
 
-**Editing and compositing** — expand **Input image(s)** in the sidebar and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there's no generate/edit switch to flip. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example turns these three inputs into a single scene:
+**Editing and compositing** — expand **Input image(s)** in the sidebar and upload one or more files (JPG, PNG, or WebP). The app switches to editing automatically — there's no generate/edit switch to flip. The width and height sliders snap to the first image's aspect ratio; describe the change and Run. With multiple images you can composite across them — the bundled editing example prints the dog from the second image onto the mug in the first:
 
 <p align="center">
-  <img src="examples/woman1.webp" height="260" alt="Editing input: person">
-  <img src="examples/cat_window.webp" height="260" alt="Editing input: cat by a window">
-  <img src="examples/bird.webp" height="260" alt="Editing input: bird">
+  <img src="examples/mug.webp" height="260" alt="Editing input: a white mug of coffee on a wooden table by a window">
+  <img src="examples/retriever.webp" height="260" alt="Editing input: a golden retriever sitting on a beach">
 </p>
 
 **Advanced settings** (in the sidebar, collapsed by default):
@@ -99,7 +98,7 @@ Before bumping, run `uv run pytest -m smoke`. It loads real weights and is the o
 
 ### Claude Code hooks
 
-This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `.claude/`) that run the checks above automatically as you edit. They are split by cost: **`ruff format` runs per edit** on the changed `.py`, `.pyi`, `.md` or `.ipynb` (the same set CI checks, so nothing is fixed only in CI), while every whole-project gate — `ruff check --fix`, `ty`, and the `pytest` suite — runs **once at the end of a turn**, and only if an edit touched something the suite asserts on (`ruff format` also runs tree-wide every turn, since it cannot lose work). A separate guard blocks `Edit`/`Write` to `.env`, `secrets.toml` and `uv.lock` (it does not intercept `Bash` writes; without `jq` it keeps working on a bash-only path rather than blocking everything). They require [`jq`](https://jqlang.github.io/jq/) and activate on session start (run `/hooks` to review). `tests/test_hooks.py` covers their behavior; `.claude/settings.local.json` (personal overrides) is gitignored.
+This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `.claude/`) that run the checks above automatically as you edit. They are split by cost: **`ruff format` runs per edit** on the changed `.py`, `.pyi`, `.md` or `.ipynb` (the same set CI checks, so nothing is fixed only in CI), while every whole-project gate — `ruff check --fix`, `ty`, and the `pytest` suite — runs **once at the end of a turn**, and only if an edit touched something the suite asserts on (`ruff format` also runs tree-wide every turn, since it cannot lose work). A separate guard blocks `Edit`/`Write` to `.env`, `secrets.toml` and `uv.lock` (it does not intercept `Bash` writes; without `jq` it keeps working on a bash-only path rather than blocking everything). A second guard, on `Bash`, blocks the commands that would wipe the model caches — `hf cache prune` (except `--dry-run`), `uv cache clean`, and recursive deletes inside the Hugging Face or uv cache — while `hf cache ls`/`rm` and `uv cache prune` stay allowed. It matches the command being run, not text, so a commit message that merely mentions one passes; like the first guard it is a backstop, not a security boundary. They require [`jq`](https://jqlang.github.io/jq/) and activate on session start (run `/hooks` to review). `tests/test_hooks.py` covers their behavior; `.claude/settings.local.json` (personal overrides) is gitignored.
 
 ## License
 
@@ -110,5 +109,6 @@ It builds on components with their own licenses, all permissive:
 - **FLUX.2 Klein 4B** (distilled) and **Qwen3-VL-2B-Instruct** — [Apache-2.0](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) (open weights, commercial use permitted). The 8-bit weights this app loads are an Apache-2.0 quantized redistribution of the same model. The 9B FLUX.2 Klein variants carry a non-commercial license and are **not** used here.
 - **mflux** and **mlx-vlm** — MIT
 - **Streamlit** — Apache-2.0
+- **Example images** — `examples/mug.webp` and `examples/retriever.webp` are Black Forest Labs' own generations, `examples/inputs/2.png` and `3.png` from [black-forest-labs/flux-3-image-klein](https://github.com/black-forest-labs/flux-3-image-klein/tree/bfc8889a4497f846416f253a3972a1941ac698b9/examples) (Apache-2.0), converted to WebP; the license travels with them as [`examples/LICENSE`](examples/LICENSE). `mug.webp` is cropped to 3:4; `retriever.webp` is otherwise unmodified. The editing prompt is that repository's two-reference example.
 
 Model weights are downloaded at runtime from Hugging Face rather than bundled in this repository.
