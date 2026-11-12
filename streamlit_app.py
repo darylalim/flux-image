@@ -60,7 +60,7 @@ VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
 # size.longest_edge=16777216), unlike SmolVLM's 512px tiling. Measured: a
 # 4032x3024 phone photo costs 11987 prompt tokens and 50s of prefill
 # against 575 tokens and 0.7s at 768px, with identical subject coverage
-# across 768/1024/full-res on the bundled 3-image example.
+# across 768/1024/full-res on the 3-image example bundled at the time.
 VLM_MAX_IMAGE_SIZE = 768
 
 # Generation cap. Named so the guard below cannot drift from the kwarg: a
@@ -85,6 +85,11 @@ DEFAULT_STEPS = 4
 # output pushed off what the model was distilled for. Passed explicitly
 # because mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
 GUIDANCE = 1.0
+
+# Shipped defaults the UI seeds its widgets with. Module constants rather than
+# literals in the UI block, so eval/run_eval.py measures what users get.
+DEFAULT_SIZE = 1024
+DEFAULT_AUTO_ENHANCE = False
 
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
@@ -576,8 +581,8 @@ if __name__ == "__main__":
 
         final_prompt = prompt
 
-        st.session_state.setdefault("width_slider", 1024)
-        st.session_state.setdefault("height_slider", 1024)
+        st.session_state.setdefault("width_slider", DEFAULT_SIZE)
+        st.session_state.setdefault("height_slider", DEFAULT_SIZE)
         st.session_state.setdefault("steps_slider", DEFAULT_STEPS)
 
         # The three sliders below are instantiated on every run — two
@@ -593,7 +598,7 @@ if __name__ == "__main__":
         with st.expander("Advanced settings", icon=":material/tune:", expanded=False):
             auto_enhance = st.toggle(
                 "Prompt upsampling",
-                value=False,
+                value=DEFAULT_AUTO_ENHANCE,
                 key="auto_enhance_toggle",
             )
             st.caption("Automatically enhance the prompt using a VLM")

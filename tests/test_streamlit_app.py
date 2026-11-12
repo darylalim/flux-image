@@ -1549,6 +1549,20 @@ class TestStreamlitApp:
             at = app.run(timeout=10)
             assert at.slider(key="steps_slider").value == streamlit_app.DEFAULT_STEPS
 
+    def test_widgets_start_at_the_shipped_default_constants(self):
+        # eval/run_eval.py reads these constants to run "as shipped"; a widget
+        # seeded from a literal instead would let the two drift apart silently.
+        import streamlit_app
+
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert at.slider(key="width_slider").value == streamlit_app.DEFAULT_SIZE
+            assert at.slider(key="height_slider").value == streamlit_app.DEFAULT_SIZE
+            assert (
+                at.toggle(key="auto_enhance_toggle").value
+                == streamlit_app.DEFAULT_AUTO_ENHANCE
+            )
+
     def test_steps_slider_still_allows_long_runs(self):
         # Losing the Base preset must not lose the ability to run many steps.
         # Assert the value reaches generate_image() — merely reading the slider
