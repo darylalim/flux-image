@@ -14,7 +14,7 @@ Phase 1a  hygiene + baseline      cache guard, .gitignore, example licenses, eva
 Phase 1b  toolchain               mflux 0.23 → everything latest (pillow<13), Streamlit 1.66 re-verify
    │       gate: four gates, smoke, drift check vs FLUX.2 golden, CI
 Phase 2   FLUX 3 swap (feat!)     one model instance, pinned FLUX + VLM, BFL upsampling, license
-   │       gate: peak ≤ 26 GB AND time ≤ 60 s AND quality ≥ FLUX.2  ──► none passes: ABORT
+   │       gate: peak ≤ 26 GB AND time (t2i ≤ 60 s, edits ≤ 2× FLUX.2) AND quality ≥ FLUX.2  ──► none passes: ABORT
    │                                                                     (ship 1a/1b/3 as 0.9.1)
 Phase 3   Darkroom rebrand        name, light theme, screenshots
    │       gate: four gates, CI
@@ -372,7 +372,7 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 | Code | Four gates + Stop hook + CI per phase | All green (existing) |
 | Real surface | `pytest -m smoke` | Green before each phase merge (existing) |
 | Memory / disk | `phys_footprint`, `df` | ≥ 6 GB / ≥ 15 GB free (existing) |
-| **Time** | Latency script, below | **≤ 60 s** warm text-to-image Run (new) |
+| **Time** | Latency script, below | **≤ 60 s** warm text-to-image Run; **edits ≤ 2× FLUX.2** per case (new) |
 | **Quality** | Scored evaluation set, below | FLUX 3 ≥ FLUX.2, no zero scores (new) |
 | **Drift** | Golden runs + pixel/text diff | Flags for review; never auto-fails (new) |
 
@@ -380,7 +380,17 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 
 - **Budget: ≤ 60 s for one 1024² text-to-image Run, warm, upsampling on.** Warm means the models are loaded and the prompt cache has been primed by the load-time warm-up. The budget is the owner's (2026-10-21).
 - **What is timed:** wall clock from the Run submit to the result drawn, which is `_resolve_prompt` plus `infer()`. Take the median of 3 Runs after one discarded warm Run, at fixed seeds.
-- **Recorded, not gated:** the 2-reference example edit; upsampling off; the cold first Run of a server (model load plus the warm-up, ~30 s of it on 8B). If an edit exceeds 60 s, bring the numbers to the owner rather than assuming the budget covers edits.
+- **Edit budget: each edit case ≤ 2× FLUX.2's time on the same case, both as shipped** (decided by the owner 2026-11-12, after Phase 1a measured FLUX.2's own 2-reference edit at ~75 s, over 60 s). An absolute 60 s would ask FLUX 3, at 16 steps, to edit faster than the app does today, and no budget at all would let a multi-minute edit ship undecided. The baseline is `repeat-flux2-0.9.0-2026-11-12` (pipeline already loaded):
+
+  | Case | FLUX.2 | Budget (2×) |
+  |---|---|---|
+  | 7, 2-reference example, 768×1024 | 74.9 s | ≤ 149.8 s |
+  | 8, 1 reference, 768×1024 | 40.4 s | ≤ 80.8 s |
+  | 9, 1 reference, 1024² | 56.3 s | ≤ 112.6 s |
+  | 10, 1 reference, 1024² | 56.2 s | ≤ 112.4 s |
+
+  FLUX 3's figure for a case is the median of 3 warm Runs at that case's seed, with the edit pipeline loaded. The same levers apply in the same order, each re-scored. A lever that changes the default size changes edits only where the size comes from the slider, not from the references, so for edits the step lever is the one that moves the number.
+- **Recorded, not gated:** upsampling off; the cold first Run of a server (model load plus the warm-up, ~30 s of it on 8B).
 - **Baseline:** Phase 1b records FLUX.2's timings as shipped (4 steps, upsampling off by default) on the upgraded toolchain, so the Phase 2 numbers can be read against what users have today.
 - **If it fails, the levers in order:**
   1. `DEFAULT_STEPS` 16 → 12;
@@ -472,9 +482,8 @@ merge and CI. Deviations from the steps below:
   - Peak MLX memory: 17.4 GB text-to-image, up to 20.9 GB edit.
   - The golden manifest carries an `amendments` entry. Its revision was
     filled in after the run, and the 426 s cold figure includes the download.
-- **For the owner, ahead of Phase 2:** FLUX.2's own 2-reference edit
-  already exceeds 60 s (75 s). The latency section asks for edit numbers above
-  60 s to come to you rather than be assumed covered.
+- **Decided by the owner:** FLUX.2's own 2-reference edit already exceeds
+  60 s (75 s), so edits get their own gate: ≤ 2× FLUX.2 per case (Latency budget).
 
 Goal: put the guards and the measuring stick in place **before anything moves**.
 That means the cache guard hook, the `.gitignore` safety net, and the evaluation
@@ -605,7 +614,7 @@ Phase 2 merges only if **one combination** of FLUX build (Q8, Q6) and VLM rung
 target machine:
 
 1. **Memory:** peak `phys_footprint` ≤ 26 GB over the budget's sequence, with Runs serialized (Memory budget).
-2. **Time:** ≤ 60 s warm text-to-image (Latency budget).
+2. **Time:** ≤ 60 s warm text-to-image, and each edit case ≤ 2× FLUX.2's time (Latency budget).
 3. **Quality:** FLUX 3's image total ≥ FLUX.2's, no zero scores, and no zero on the upsampled-prompt row (Evaluation).
 
 The time levers (12 steps, a 768² default) count as part of a combination, each
@@ -738,7 +747,7 @@ permissive", FLUX.2 "Apache-2.0") is false. The fix ships in that commit:
   
   Add a `tests/test_readme.py` assertion that the section exists and names `hf cache rm`.
 - **Evaluation gates** (Evaluation section), alongside the Memory budget, before merge:
-  - the latency budget, ≤ 60 s warm text-to-image;
+  - the latency budget, ≤ 60 s warm text-to-image and edits ≤ 2× FLUX.2 per case;
   - the quality gate on the 10-case set: FLUX 3's image total ≥ FLUX.2's (the four image rows only), no zero scores, scored blind from the contact sheet;
   - every VLM rung considered is scored too.
   
@@ -1011,7 +1020,7 @@ come from:
 6. Which rung of the VLM fallback order fits the memory budget, and does it pass the quality gate? (Phase 2 measurement + Evaluation)
 7. Does Streamlit 1.66.1 keep 1.64's canvas geometry and theme behavior, or do the fold constants need retuning? (Phase 1b step 3)
 8. Has Pillow fixed 13.0's `_IntegralLike` import, so the `<13` cap can go? (Phase 1b step 2; re-check before release)
-9. Does FLUX 3 at 16 steps fit 60 s on the M2 Max, and if not, which lever passes both the time and the quality gate? (Phase 2, Evaluation)
+9. Does FLUX 3 at 16 steps fit 60 s for text-to-image and 2× FLUX.2 for edits on the M2 Max, and if not, which lever passes both the time and the quality gate? (Phase 2, Evaluation)
 10. Is a 2% mean-absolute-difference flag the right sensitivity? (Phase 1b drift check.) ~~Is MLX output bit-identical on unchanged versions?~~ Yes: Phase 1a's repeat run matched the golden run pixel for pixel on all 10 cases (2026-11-12). So on unchanged versions any drift at all is a signal, and the 2% threshold matters only across version bumps.
 
 ## Phase exit checklist
