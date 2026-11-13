@@ -1,6 +1,6 @@
 [project]
 name = "flux-image"
-version = "0.10.0"
+version = "0.11.0"
 description = "Darkroom: local image generation and editing on Apple Silicon with FLUX.2 Klein, built on MLX and Streamlit, with vision-aware prompt upsampling by Qwen3-VL."
 license = "MIT"
 license-files = ["LICENSE"]
