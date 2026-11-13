@@ -1,20 +1,28 @@
 import contextlib
+import json
+import math
 import random
+import tempfile
+import threading
 from pathlib import Path
 from typing import cast
 
 import mlx.core as mx
 import streamlit as st
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 from mflux.models.common.config import ModelConfig
-from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
+from mflux.models.flux3.variants import Flux3Klein, Flux3KleinEdit
 from mlx_vlm import generate as vlm_generate
 from mlx_vlm import load as load_vlm
+from mlx_vlm.apc import APCManager
 from mlx_vlm.prompt_utils import apply_chat_template
 from mlx_vlm.utils import load_config
-from PIL import Image
+from PIL import Image, ImageOps
 from streamlit.runtime.media_file_storage import MediaFileStorageError
 
-APP_TITLE = "FLUX.2 Klein Studio"
+# Interim: Phase 3 of docs/plans/flux3-upgrade.md renames the app to Darkroom.
+APP_TITLE = "FLUX 3 Klein Studio"
 
 MAX_SEED = 2_147_483_647
 MAX_IMAGE_SIZE = 1024
@@ -53,7 +61,14 @@ CANVAS_MAX_HEIGHT = 660
 # and the graphite dark one, so no theme color is hard-coded.
 CANVAS_FILL = (128, 128, 128, 28)
 
-VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
+# The prompt upsampler, pinned like the image model (see MODEL_REVISION):
+# upsampling decodes greedily, so a changed enhanced prompt should mean a change
+# here, never an upstream re-upload. The cached snapshot of this repo also has
+# no refs/main, so loading it by repo id would fail offline.
+VLM_MODEL_ID = "mlx-community/Qwen3-VL-8B-Instruct-4bit"
+VLM_REVISION = "defcdea7cc7a4b0858fea563cbbce171d328e457"
+VLM_LABEL = "Qwen3-VL 8B"
+VLM_DOWNLOAD_GB = 5.8
 
 # Longest edge handed to the VLM. Qwen3-VL's processor does not cap input
 # resolution (preprocessor_config has max_pixels=None and
@@ -65,31 +80,76 @@ VLM_MAX_IMAGE_SIZE = 768
 
 # Generation cap. Named so the guard below cannot drift from the kwarg: a
 # run that stops because it hit the cap is a mid-sentence fragment, and
-# that is a worse FLUX prompt than the user's own words.
-VLM_MAX_TOKENS = 256
+# that is a worse FLUX prompt than the user's own words. BFL-style captions
+# measured 112-243 tokens; BFL's own ceiling is 3584.
+VLM_MAX_TOKENS = 1024
 
-# The app ships exactly one model: the distilled FLUX.2 Klein 4B, pre-quantized
-# to 8-bit by mflux itself (its safetensors carry mflux's own
-# quantization_level=8 metadata), so loading needs no local quantization pass.
-# 8.6GB on disk against 16GB for the bf16 original. The base (50-step) variant
-# has no pre-quantized build on the Hub, which is why the app no longer offers a
-# mode switch.
-MODEL_REPO = "mlx-community/flux2-klein-4b-8bit"
+# BFL's prompt upsampling system prompts for an external VLM, vendored
+# unmodified (the "t2i" and "i2i" keys) from github.com/black-forest-labs/
+# flux-3-image-klein src/flux3/pup_prompts_external_vlm.json at bfc8889a,
+# Apache-2.0 -- see prompts/LICENSE and prompts/NOTICE. These are BFL's
+# prompts: don't edit them. The t2i prompt is ~10k tokens, which is why the
+# VLM runs with a prefix cache (_get_apc).
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+UPSAMPLE_PROMPTS = json.loads(
+    (PROMPTS_DIR / "pup_prompts_external_vlm.json").read_text(encoding="utf-8")
+)
 
-# The distilled variant converges in 4 steps; this seeds the steps slider.
-DEFAULT_STEPS = 4
+# BFL's user message for an edit (src/flux3/pup.py, I2I_SCAFFOLD[False]);
+# text-to-image sends the bare request.
+I2I_SCAFFOLD = (
+    "Reference images follow in order (the first image, the second image, ...).\n"
+    "User request: {instruction}\n"
+    "Output the caption."
+)
 
-# It is also guidance-free, so guidance is pinned rather than exposed. Above
-# 1.0 mflux runs classifier-free guidance against a blank negative prompt,
-# using the value as the CFG scale -- a second transformer pass per step, and
-# output pushed off what the model was distilled for. Passed explicitly
-# because mflux's own defaults disagree (generate_image: 1.0, Config: 4.0).
-GUIDANCE = 1.0
+# BFL's decoding (src/flux3/pup.py): greedy, so the enhanced prompt is
+# deterministic per version, with a presence penalty on text-to-image only.
+UPSAMPLE_PRESENCE_PENALTY = {"t2i": 1.5, "i2i": 0.0}
+
+# The app ships exactly one model: FLUX 3 Image Klein (distilled), converted
+# to MLX and quantized to 8 bits by the mflux-community organization with mflux
+# 0.23.0 -- an unofficial conversion, not gated (mlx-community has no FLUX 3
+# build). 9.9 GB for the whole repo. mflux detects the quantization from the
+# safetensors' own quantization_level metadata, so loading passes no quantize.
+#
+# Loaded by local snapshot path, never by repo id: mflux pins revisions only for
+# the repos in its own table (ModelRevisions.PINNED), which lists BFL's
+# originals but not mflux-community's builds, so a bare id would float to main.
+# A snapshot fetched by full SHA gets no ref in the HF cache, so `hf cache
+# prune` would delete it as detached -- never run it (CLAUDE.md).
+MODEL_REPO = "mflux-community/flux-3-image-klein-mflux-q8"
+MODEL_REVISION = "7e46237dea3999a9792959f5e000aeb1b9f9e7df"
+MODEL_LABEL = "FLUX 3 Image Klein"
+MODEL_QUANT_LABEL = "Q8"
+MODEL_DOWNLOAD_GB = 9.9
+MODEL_LICENSE_NAME = "FLUX Kommunity License"
+MODEL_LICENSE_URL = (
+    "https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md"
+)
+
+# The distilled checkpoint's step count (mflux's default and the model
+# card's); this seeds the steps slider. There is no guidance: mflux nulls it
+# for the distilled checkpoint, so nothing runs classifier-free guidance.
+DEFAULT_STEPS = 16
+
+# mflux accepts 1-10 references and raises beyond that. The uploader keeps the
+# first MAX_REFERENCES and warns.
+MAX_REFERENCES = 10
+
+# mflux's own per-reference pixel budgets (flux3_reference_images.py): one
+# reference is fitted to 4 MP, each of several to 1 MP. infer() downscales a
+# copy to these before writing it out, so a 24 MP phone photo isn't PNG-encoded
+# for nothing.
+SINGLE_REFERENCE_MAX_PIXELS = 4 * 1024 * 1024
+MULTI_REFERENCE_MAX_PIXELS = 1024 * 1024
 
 # Shipped defaults the UI seeds its widgets with. Module constants rather than
 # literals in the UI block, so eval/run_eval.py measures what users get.
+# Upsampling is on: the model card says not to use the model without one, and
+# a short prompt as typed gives generic output.
 DEFAULT_SIZE = 1024
-DEFAULT_AUTO_ENHANCE = False
+DEFAULT_AUTO_ENHANCE = True
 
 EXAMPLE_PROMPTS = [
     "Create a vase on a table in living room, the color of the vase is a gradient of color, starting with #02eb3c color and finishing with #edfa3c. The flowers inside the vase have the color #ff0088",
@@ -129,63 +189,129 @@ def _materialized(model):
     return model
 
 
-# model_path picks the weights; model_config supplies the architecture (its
-# transformer/text-encoder overrides), which mflux does not read from the repo.
-# Passing it is redundant *today* — mflux itself defaults to
-# `model_config or ModelConfig.flux2_klein_4b()` — but it is stated explicitly so
-# the repo/architecture pairing is visible at the call site, and it becomes
-# load-bearing the moment MODEL_REPO points at anything but a 4b build.
-@st.cache_resource(show_spinner="Loading FLUX.2 Klein (8-bit)…")
-def _get_model():
-    return _materialized(
-        Flux2Klein(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
+class _Flux3KleinAnyMode(Flux3KleinEdit):
+    """One FLUX 3 instance serving both modes.
+
+    Flux3Klein and Flux3KleinEdit are the same model: both subclass mflux's
+    _Flux3KleinCore and add only a generate_image wrapper over the shared
+    _generate. Holding one instance instead of two saves a full 9.9 GB copy
+    of the weights. generate_image is the edit; generate_text_image is
+    text-to-image, borrowed from Flux3Klein, whose body only calls the
+    _generate this class also has. (Inheriting from both classes instead fails
+    ty: their generate_image signatures conflict.)
+    """
+
+    generate_text_image = Flux3Klein.generate_image
+
+
+def _local_snapshot(repo_id, revision):
+    """The cached snapshot path of repo_id@revision, or None if not downloaded."""
+    try:
+        return snapshot_download(repo_id, revision=revision, local_files_only=True)
+    except LocalEntryNotFoundError:
+        return None
+
+
+def _pinned_snapshot(repo_id, revision):
+    """Local path of repo_id at exactly `revision`, downloading it if needed.
+
+    The local check first: it needs no network, so a cached model loads
+    offline.
+    """
+    return _local_snapshot(repo_id, revision) or snapshot_download(
+        repo_id, revision=revision
     )
 
 
-@st.cache_resource(show_spinner="Loading FLUX.2 Klein Edit (8-bit)…")
-def _get_edit_model():
+# model_path picks the weights; model_config supplies the architecture (its
+# transformer/text-encoder overrides), which mflux does not read from the repo.
+# It is mflux's default today, stated so the pairing is visible at the call
+# site, and load-bearing if MODEL_REPO ever points at the Base checkpoint.
+@st.cache_resource(show_spinner=f"Loading {MODEL_LABEL} ({MODEL_QUANT_LABEL})…")
+def _get_model() -> _Flux3KleinAnyMode:
     return _materialized(
-        Flux2KleinEdit(model_path=MODEL_REPO, model_config=ModelConfig.flux2_klein_4b())
+        _Flux3KleinAnyMode(
+            model_path=_pinned_snapshot(MODEL_REPO, MODEL_REVISION),
+            model_config=ModelConfig.flux3_image_klein(),
+        )
     )
 
 
 @st.cache_resource(show_spinner="Loading Qwen3-VL prompt enhancer…")
 def _get_vlm():
-    model, processor = load_vlm(VLM_MODEL_ID)
-    config = load_config(VLM_MODEL_ID)
+    path = _pinned_snapshot(VLM_MODEL_ID, VLM_REVISION)
+    model, processor = load_vlm(path)
+    config = load_config(path)
     return model, processor, config
 
 
-UPSAMPLE_PROMPT_TEXT_ONLY = (
-    "You are an expert prompt engineer for FLUX.2 by Black Forest Labs. "
-    "Rewrite user prompts to be more descriptive while strictly preserving "
-    "their core subject and intent. Keep the enhanced prompt under 120 "
-    "words.\n\n"
-    "Guidelines:\n"
-    "- Add concrete visual specifics: textures, materials, lighting, "
-    "shadows, and spatial relationships.\n"
-    "- Only include rendered text the user explicitly asked for; never "
-    "invent signs, labels, captions, or titles. When the user does ask for "
-    "text, put it in quotation marks - without quotes, the model generates "
-    "gibberish.\n\n"
-    "Output only the revised prompt and nothing else."
-)
+@st.cache_resource(show_spinner=False)
+def _get_apc():
+    """The VLM's automatic prefix cache, as long-lived as the VLM itself.
 
-UPSAMPLE_PROMPT_WITH_IMAGES = (
-    "You are an image-editing expert. Convert the user's editing request "
-    "into one concise instruction (50-80 words, ~30 for brief requests).\n\n"
-    "Rules:\n"
-    "- Single instruction only, no commentary\n"
-    "- Use clear, analytical language (avoid vague words like "
-    '"whimsical" or "cascading")\n'
-    "- Specify what changes AND what stays the same (face, lighting, "
-    "composition)\n"
-    "- Turn negatives into positives "
-    '("don\'t change X" becomes "keep X")\n'
-    "- Replace abstract adjectives with the specific materials, colours "
-    "and lighting they imply\n\n"
-    "Output only the final instruction in plain text and nothing else."
-)
+    BFL's t2i system prompt is ~10k tokens; a prefix hit skips its prefill.
+    Built directly rather than via mlx_vlm.apc.from_env, which by default
+    adds a 20 GB on-disk tier under ~/.cache/mlx-vlm: the app writes nothing
+    to disk, so this pool is memory-only (disk=None).
+    """
+    return APCManager()
+
+
+@st.cache_resource(show_spinner=False)
+def _inference_lock():
+    """One process-wide lock: a single Run at a time per server.
+
+    The FLUX instance is shared by every session, so two concurrent Runs would
+    count each other's steps in their progress bars (one callbacks registry),
+    clear each other's prompt cache, and hold two sets of activations, which
+    the memory budget does not allow. The VLM's generate() takes it too, so
+    its APC pool and its peak never overlap a diffusion pass.
+    """
+    return threading.Lock()
+
+
+@contextlib.contextmanager
+def _serialized(on_wait=None):
+    """Hold the inference lock for the block.
+
+    If another Run has it, on_wait(True) is called before blocking and
+    on_wait(False) once the lock is ours, so a status can say "waiting" and
+    then go back to what it was doing.
+    """
+    lock = _inference_lock()
+    if not lock.acquire(blocking=False):
+        if on_wait is not None:
+            on_wait(True)
+        lock.acquire()
+        if on_wait is not None:
+            on_wait(False)
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _normalized(image):
+    """An input image as both FLUX and the VLM should see it.
+
+    Upright (EXIF orientation applied, so a sideways phone photo is described
+    and edited upright), any transparency composited over white, then RGB --
+    the same steps as BFL's policy_reference. Applied once, where an image is
+    opened, so every later consumer works from the same pixels.
+    """
+    image = ImageOps.exif_transpose(image)
+    if image.mode in ("RGBA", "LA", "PA") or (
+        image.mode == "P" and "transparency" in image.info
+    ):
+        rgba = image.convert("RGBA")
+        white = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(white, rgba)
+    return image.convert("RGB")
+
+
+def _open_image(source):
+    """Open an upload, a path or a file object as a normalized RGB image."""
+    return _normalized(Image.open(source))
 
 
 def _vlm_images(image_list):
@@ -204,15 +330,14 @@ def _vlm_images(image_list):
     return resized
 
 
-def upsample_prompt(prompt, image_list: list | None = None):
+def upsample_prompt(prompt, image_list: list | None = None, on_wait=None):
     try:
         model, processor, config = _get_vlm()
-        system_prompt = (
-            UPSAMPLE_PROMPT_WITH_IMAGES if image_list else UPSAMPLE_PROMPT_TEXT_ONLY
-        )
+        task = "i2i" if image_list else "t2i"
+        user = I2I_SCAFFOLD.format(instruction=prompt) if image_list else prompt
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": UPSAMPLE_PROMPTS[task]},
+            {"role": "user", "content": user},
         ]
         # apply_chat_template returns a str at runtime for Qwen3-VL, though the
         # stub types it as a broader union.
@@ -225,31 +350,25 @@ def upsample_prompt(prompt, image_list: list | None = None):
                 num_images=len(image_list) if image_list else 0,
             ),
         )
-        result = vlm_generate(
-            model,
-            processor,
-            formatted_prompt,
-            # mlx_vlm types `image` as str | list[str] | None; it also accepts
-            # PIL Images at runtime. ty cannot see the mismatch: _vlm_images
-            # has no return annotation, so its result is Unknown. ty doesn't
-            # check the keyword names below either, so a typo is dropped
-            # silently.
-            image=_vlm_images(image_list),
-            max_tokens=VLM_MAX_TOKENS,
-            # Qwen3-VL's own generation_config.json asks for top_p 0.8 /
-            # top_k 20; mlx-vlm leaves top_k off unless told otherwise, which
-            # widens the tail well past what the model was tuned for.
-            temperature=0.7,
-            top_p=0.8,
-            top_k=20,
-            # 1.05 cleared the multi-image repetition loop in every measured
-            # case, re-measured on mlx-vlm 0.7, whose always-chunked prefill
-            # leaves the prompt out of the window. The window is explicit
-            # because mlx-vlm defaults it to 20 tokens, too short to see a
-            # clause-length cycle.
-            repetition_penalty=1.05,
-            repetition_context_size=64,
-        )
+        apc = _get_apc()
+        with _serialized(on_wait):
+            result = vlm_generate(
+                model,
+                processor,
+                formatted_prompt,
+                # mlx_vlm types `image` as str | list[str] | None; it also
+                # accepts PIL Images at runtime. ty cannot see the mismatch:
+                # _vlm_images has no return annotation, so its result is
+                # Unknown. ty doesn't check the keyword names below either, so
+                # a typo would be dropped silently -- a mocked test pins them.
+                image=_vlm_images(image_list),
+                max_tokens=VLM_MAX_TOKENS,
+                # BFL's decoding: temperature 0 is greedy (its top_p/top_k are
+                # inert there, so they are not passed).
+                temperature=0.0,
+                presence_penalty=UPSAMPLE_PRESENCE_PENALTY[task],
+                apc_manager=apc,
+            )
         # mlx-vlm reports "length" when the cap cut generation off rather
         # than the model stopping on its own; that text is a fragment.
         if result.finish_reason == "length":
@@ -272,7 +391,7 @@ def upsample_prompt(prompt, image_list: list | None = None):
         return prompt
 
 
-def _resolve_prompt(prompt, image_list, auto_enhance):
+def _resolve_prompt(prompt, image_list, auto_enhance, on_wait=None):
     """Resolve the final prompt, optionally auto-enhancing via the VLM.
 
     Returns was_enhanced=False when the VLM call fails or produces output
@@ -281,7 +400,7 @@ def _resolve_prompt(prompt, image_list, auto_enhance):
     """
     if not auto_enhance:
         return prompt, False
-    enhanced = upsample_prompt(prompt, image_list=image_list)
+    enhanced = upsample_prompt(prompt, image_list=image_list, on_wait=on_wait)
     if enhanced == prompt:
         return prompt, False
     return enhanced, True
@@ -309,6 +428,22 @@ def _clear_example_images():
     st.session_state.pop("example_images", None)
 
 
+def _capped_references(sources):
+    """The first MAX_REFERENCES input images, with a warning if there were more.
+
+    mflux raises beyond its limit; a warning under the uploader explains the
+    cut instead. UI-only: it draws a warning.
+    """
+    if len(sources) <= MAX_REFERENCES:
+        return sources
+    st.warning(
+        f"{MODEL_LABEL} edits at most {MAX_REFERENCES} images; using the first "
+        f"{MAX_REFERENCES}.",
+        icon=":material/warning:",
+    )
+    return sources[:MAX_REFERENCES]
+
+
 def _truncate(text, length=70):
     return text if len(text) <= length else text[:length].rstrip() + "…"
 
@@ -334,6 +469,31 @@ def _dimensions_from_images(image_list):
         new_h = 1024
         new_w = round(1024 * aspect / 32) * 32
     return max(256, min(MAX_IMAGE_SIZE, new_w)), max(256, min(MAX_IMAGE_SIZE, new_h))
+
+
+def _reference_paths(image_list, directory):
+    """Write the references into `directory` as PNGs and return their paths.
+
+    Each is a copy downscaled to mflux's own budget for its count (mflux would
+    shrink it there anyway), so a full-resolution phone photo isn't encoded for
+    nothing. PNG keeps the pixels exact; compress_level 1 keeps it fast.
+    """
+    budget = (
+        SINGLE_REFERENCE_MAX_PIXELS
+        if len(image_list) == 1
+        else MULTI_REFERENCE_MAX_PIXELS
+    )
+    paths = []
+    for index, image in enumerate(image_list):
+        w, h = image.size
+        if w * h > budget:
+            scale = math.sqrt(budget / (w * h))
+            size = (max(1, math.floor(w * scale)), max(1, math.floor(h * scale)))
+            image = image.resize(size, Image.Resampling.LANCZOS)
+        path = directory / f"reference-{index}.png"
+        image.save(path, format="PNG", compress_level=1)
+        paths.append(str(path))
+    return paths
 
 
 def _canvas_spec(width, height):
@@ -392,6 +552,7 @@ def infer(
     num_inference_steps=None,
     image_list=None,
     progress_callback=None,
+    on_wait=None,
 ):
     if num_inference_steps is None:
         num_inference_steps = DEFAULT_STEPS
@@ -399,36 +560,43 @@ def infer(
     if randomize_seed:
         seed = random.randint(0, MAX_SEED)
 
-    model = _get_edit_model() if image_list else _get_model()
+    model = _get_model()
 
-    reporter = None
-    if progress_callback is not None:
-        reporter = _ProgressReporter(progress_callback)
-        model.callbacks.register(reporter)
+    with _serialized(on_wait):
+        reporter = None
+        if progress_callback is not None:
+            reporter = _ProgressReporter(progress_callback)
+            model.callbacks.register(reporter)
 
-    try:
-        if image_list:
-            image = model.generate_image(
-                seed=seed,
-                prompt=prompt,
-                num_inference_steps=num_inference_steps,
-                width=width,
-                height=height,
-                guidance=GUIDANCE,
-                image_paths=image_list,
-            )
-        else:
-            image = model.generate_image(
-                seed=seed,
-                prompt=prompt,
-                num_inference_steps=num_inference_steps,
-                width=width,
-                height=height,
-                guidance=GUIDANCE,
-            )
-    finally:
-        if reporter is not None:
-            model.callbacks.in_loop.remove(reporter)
+        try:
+            if image_list:
+                # mflux opens every image_paths entry with PIL.Image.open, which
+                # rejects a PIL Image, so the references go through real files
+                # that live for this call only.
+                with tempfile.TemporaryDirectory(prefix="flux-image-") as tmp:
+                    image = model.generate_image(
+                        seed=seed,
+                        prompt=prompt,
+                        image_paths=_reference_paths(image_list, Path(tmp)),
+                        num_inference_steps=num_inference_steps,
+                        width=width,
+                        height=height,
+                    )
+            else:
+                image = model.generate_text_image(
+                    seed=seed,
+                    prompt=prompt,
+                    num_inference_steps=num_inference_steps,
+                    width=width,
+                    height=height,
+                )
+        finally:
+            if reporter is not None:
+                model.callbacks.in_loop.remove(reporter)
+            # mflux keeps every encoded prompt for the model's lifetime, and an
+            # upsampled prompt is nearly always new, so on a cached model this
+            # grows without bound. Only an identical re-Run would reuse one.
+            model.prompt_cache.clear()
 
     return image.image, seed
 
@@ -533,8 +701,9 @@ if __name__ == "__main__":
         if uploaded_files:
             # A manual upload overrides any loaded example images
             st.session_state.pop("example_images", None)
+            uploaded_files = _capped_references(uploaded_files)
             try:
-                image_list = [Image.open(f) for f in uploaded_files]
+                image_list = [_open_image(f) for f in uploaded_files]
                 _image_key = tuple((f.name, f.file_id) for f in uploaded_files)
             except OSError:
                 st.warning(
@@ -543,9 +712,9 @@ if __name__ == "__main__":
                 )
                 _image_key = ()
         elif st.session_state.get("example_images"):
-            example_images = st.session_state.example_images
+            example_images = _capped_references(st.session_state.example_images)
             try:
-                image_list = [Image.open(p) for p in example_images]
+                image_list = [_open_image(p) for p in example_images]
                 _image_key = tuple(example_images)
             except OSError:
                 st.warning(
@@ -602,7 +771,10 @@ if __name__ == "__main__":
                 value=DEFAULT_AUTO_ENHANCE,
                 key="auto_enhance_toggle",
             )
-            st.caption("Automatically enhance the prompt using a VLM")
+            st.caption(
+                f"{MODEL_LABEL} expects a full scene caption, so a VLM expands "
+                "your prompt into one. Switch off only when pasting a caption."
+            )
 
             randomize_seed = st.toggle("Randomize seed", value=True)
             seed_val = st.number_input(
@@ -671,10 +843,13 @@ if __name__ == "__main__":
 
         # App metadata closes the sidebar (Streamlit's layout guidance: settings
         # and small app info there, content in main).
+        # The license line is load-bearing: anyone running the app sees which
+        # terms its outputs fall under (test_sidebar_caption_names_the_license).
         st.caption(
-            f"[FLUX.2 Klein 4B](https://huggingface.co/{MODEL_REPO}) 8-bit · "
-            f"prompt upsampling by [Qwen3-VL 2B](https://huggingface.co/{VLM_MODEL_ID})"
-            " · runs on MLX"
+            f"[{MODEL_LABEL}](https://huggingface.co/{MODEL_REPO}) "
+            f"{MODEL_QUANT_LABEL} under the [{MODEL_LICENSE_NAME}]"
+            f"({MODEL_LICENSE_URL}) · prompt upsampling by "
+            f"[{VLM_LABEL}](https://huggingface.co/{VLM_MODEL_ID}) · runs on MLX"
         )
 
     if run_clicked and not final_prompt.strip() and not image_list:
@@ -709,11 +884,34 @@ if __name__ == "__main__":
             # it shifted for the rest of the run.
             vlm_load_slot = st.container()
 
+        def _waiting_then(label, expanded):
+            """An on_wait for _serialized: say "waiting" while another
+            session's Run holds the inference lock, then restore `label`."""
+
+            def on_wait(waiting):
+                if waiting:
+                    status.update(
+                        label="Waiting for the other Run to finish…", expanded=True
+                    )
+                else:
+                    status.update(label=label, expanded=expanded)
+
+            return on_wait
+
         if needs_vlm:
+            # On a fresh machine the first Run downloads the VLM; huggingface_hub
+            # reports progress only to the terminal, so say so here.
+            if _local_snapshot(VLM_MODEL_ID, VLM_REVISION) is None:
+                status.update(
+                    label=f"Downloading {VLM_LABEL}, {VLM_DOWNLOAD_GB} GB, "
+                    "first run only…",
+                    expanded=True,
+                )
             # Warm the VLM here so the call in notices below is a cache hit. A
             # failed load is retried there, where upsample_prompt reports it.
             with vlm_load_slot, contextlib.suppress(Exception):
                 _get_vlm()
+            status.update(label="Enhancing prompt…", expanded=False)
 
         if cache_key is not None and cache_key in cache:
             run_prompt, was_auto_enhanced = cache[cache_key], True
@@ -722,7 +920,10 @@ if __name__ == "__main__":
             # must outlive result_slot, which the bottom block overwrites.
             with notices:
                 run_prompt, was_auto_enhanced = _resolve_prompt(
-                    final_prompt, image_list, auto_enhance
+                    final_prompt,
+                    image_list,
+                    auto_enhance,
+                    on_wait=_waiting_then("Enhancing prompt…", False),
                 )
             if was_auto_enhanced and cache_key is not None:
                 cache[cache_key] = run_prompt
@@ -735,7 +936,14 @@ if __name__ == "__main__":
         with status:
             # expanded=True on every mid-run update: in Streamlit 1.64 a label
             # change without it resets the status to closed, hiding the bar.
-            status.update(label="Generating image…", expanded=True)
+            if _local_snapshot(MODEL_REPO, MODEL_REVISION) is None:
+                status.update(
+                    label=f"Downloading {MODEL_LABEL}, {MODEL_DOWNLOAD_GB} GB, "
+                    "first run only…",
+                    expanded=True,
+                )
+            else:
+                status.update(label="Generating image…", expanded=True)
             progress_bar = st.progress(0, text="Starting…")
 
             def _update_progress(step, total):
@@ -756,6 +964,7 @@ if __name__ == "__main__":
                     num_inference_steps,
                     image_list=image_list,
                     progress_callback=_update_progress,
+                    on_wait=_waiting_then("Generating image…", True),
                 )
             except Exception as exc:
                 status.update(label="Generation failed", state="error")

@@ -180,8 +180,6 @@ def run(
     auto_enhance: bool | None = None,
 ):
     sys.path.insert(0, str(REPO_ROOT))
-    import mlx.core as mx
-
     import streamlit_app as app
 
     doc = load_cases(cases_path)
@@ -245,22 +243,15 @@ def run(
             "warm_median_seconds": statistics.median(warm),
         }
 
-    # Text-to-image first, then edits, releasing the txt2img weights in between
-    # so the two pipelines are never resident together on a 32 GB machine.
+    # Text-to-image first, then edits. One model instance serves both modes,
+    # so there is no second pipeline to load between them.
     ordered = sorted(cases, key=lambda c: (bool(c["references"]), c["id"]))
-    released = False
     for case in ordered:
         refs = case["references"]
-        if refs and not released:
-            app._get_model.clear()
-            mx.clear_cache()
-            released = True
-            # Load the edit pipeline outside any case's timing, so the first
-            # edit case measures a Run, not a load (or a download).
-            start = time.perf_counter()
-            app._get_edit_model()
-            manifest["edit_model_load_seconds"] = round(time.perf_counter() - start, 2)
-        image_list = [Image.open(app._EXAMPLES_DIR / name) for name in refs] or None
+        # Opened the way the app opens them (EXIF-upright RGB); _open_image is
+        # a pure helper, not a getter.
+        opener = getattr(app, "_open_image", Image.open)
+        image_list = [opener(app._EXAMPLES_DIR / name) for name in refs] or None
         if image_list:
             width, height = app._dimensions_from_images(image_list)
         else:

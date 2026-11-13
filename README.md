@@ -104,9 +104,13 @@ This repo ships opt-in [Claude Code](https://claude.com/claude-code) hooks (in `
 
 This project is released under the [MIT License](LICENSE).
 
-It builds on components with their own licenses, all permissive:
+> **Branch `feat/flux3-klein` is an unmerged record.** FLUX 3 Image Klein failed this project's edit-time gate on the target Mac, so this code never shipped; see `docs/plans/flux3-upgrade.md` ("FLUX 3 shelved"). The terms below describe what this branch's code loads.
 
-- **FLUX.2 Klein 4B** (distilled) and **Qwen3-VL-2B-Instruct** — [Apache-2.0](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) (open weights, commercial use permitted). The 8-bit weights this app loads are an Apache-2.0 quantized redistribution of the same model. The 9B FLUX.2 Klein variants carry a non-commercial license and are **not** used here.
+It builds on components with their own licenses:
+
+- **FLUX 3 Image Klein** — the [FLUX Kommunity License v1.0](https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/main/LICENSE.md), **not** a permissive license: non-commercial use, plus commercial output generation only for qualifying users under US$5M gross annualized revenue, with Section 4 restrictions that include not using outputs to train a competing model. The Q8 weights this branch loads are `mflux-community`'s unofficial MLX conversion; the license binds whoever downloads and uses them. FLUX and Black Forest Labs are trademarks of their owner; this project is not affiliated.
+- **Qwen3-VL-8B-Instruct** (prompt upsampling) — Apache-2.0
+- **Prompt upsampling system prompts** — Black Forest Labs' `pup_prompts_external_vlm.json` (Apache-2.0), vendored unmodified in [`prompts/`](prompts/NOTICE) with its license
 - **mflux** and **mlx-vlm** — MIT
 - **Streamlit** — Apache-2.0
 - **Example images** — `examples/mug.webp` and `examples/retriever.webp` are Black Forest Labs' own generations, `examples/inputs/2.png` and `3.png` from [black-forest-labs/flux-3-image-klein](https://github.com/black-forest-labs/flux-3-image-klein/tree/bfc8889a4497f846416f253a3972a1941ac698b9/examples) (Apache-2.0), converted to WebP; the license travels with them as [`examples/LICENSE`](examples/LICENSE). `mug.webp` is cropped to 3:4; `retriever.webp` is otherwise unmodified. The editing prompt is that repository's two-reference example.

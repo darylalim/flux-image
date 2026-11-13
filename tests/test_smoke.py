@@ -1,17 +1,18 @@
 """Opt-in smoke tests: real weights, real generation, no mocks.
 
-Every other test in this suite patches ``Flux2Klein``/``Flux2KleinEdit`` with a
-MagicMock, so an mflux API break sails through the whole green suite. These are
-the only tests that exercise the real stack end to end, which makes them the
-pre-release gate — and also why they are deselected by default (see
-``[tool.pytest.ini_options]`` in ``pyproject.toml``): they need ~11.3GB of weights
-on disk (8.6GB FLUX.2 Klein + 2.7GB Qwen3-VL) and Apple Silicon, neither of
-which CI has.
+Every other test in this suite patches mflux's FLUX 3 classes with stubs, so an
+mflux API break sails through the whole green suite. These are the only tests
+that exercise the real stack end to end, which makes them the pre-release gate
+— and also why they are deselected by default (see
+``[tool.pytest.ini_options]`` in ``pyproject.toml``): they need ~15.7GB of
+weights on disk (9.9GB FLUX 3 Image Klein Q8 + 5.8GB Qwen3-VL 8B) and Apple
+Silicon, neither of which CI has.
 
     uv run pytest -m smoke            # all of them
     uv run pytest -m smoke -k text    # just text-to-image
 
-Weights come from the HF cache; the first run downloads them.
+Weights come from the HF cache at the app's pinned revisions; the first run
+downloads them.
 """
 
 import re
@@ -53,17 +54,18 @@ def test_text_to_image_generates_a_real_image(app):
     assert seed == 1234  # not randomized unless asked
 
 
-def test_edit_accepts_the_pil_images_the_ui_builds(app):
+def test_edit_runs_from_the_images_the_ui_builds(app):
     """The editing path's real contract, which the mocks cannot check.
 
-    Both UI branches build ``image_list`` with ``Image.open(...)`` — PIL Images,
-    not paths — and ``infer()`` hands that straight to mflux's ``image_paths``,
-    which is typed ``list[Path | str]``. Whether mflux tolerates PIL objects
-    there is invisible to a MagicMock and load-bearing in production, so drive
-    it exactly the way the UI does rather than passing paths.
+    Both UI branches build ``image_list`` with ``_open_image(...)`` -- PIL
+    Images, not paths -- while mflux's FLUX 3 edit opens every
+    ``image_paths`` entry with ``PIL.Image.open``, which raises on a PIL Image.
+    So ``infer()`` writes the references to temporary files. Drive it exactly
+    the way the UI does rather than passing paths.
     """
     image_list = [
-        Image.open(app._EXAMPLES_DIR / name) for name in ("mug.webp", "retriever.webp")
+        app._open_image(app._EXAMPLES_DIR / name)
+        for name in ("mug.webp", "retriever.webp")
     ]
     image, _ = app.infer(
         "print the dog from image 2 onto the mug in image 1",
@@ -73,6 +75,21 @@ def test_edit_accepts_the_pil_images_the_ui_builds(app):
         image_list=image_list,
     )
     _is_real_image(image, (_W, _H))
+
+
+def test_both_modes_run_on_one_instance(app):
+    """The single-instance subclass: text-to-image borrows Flux3Klein's
+    generate_image onto the edit class, so prove both produce images from the
+    one cached model, in either order."""
+    model = app._get_model()
+    reference = [app._open_image(app._EXAMPLES_DIR / "retriever.webp")]
+    for image_list in (None, reference, None):
+        image, _ = app.infer(
+            "a dog on a beach", seed=11, width=_W, height=_H, image_list=image_list
+        )
+        _is_real_image(image, (_W, _H))
+    assert app._get_model() is model
+    assert model.prompt_cache == {}, "infer() left encoded prompts behind"
 
 
 def test_progress_callback_fires_and_is_deregistered(app):
@@ -108,8 +125,7 @@ def test_cached_models_generate_on_a_new_thread(app):
     import threading
 
     app._get_model()
-    app._get_edit_model()
-    image_list = [Image.open(app._EXAMPLES_DIR / "retriever.webp")]
+    image_list = [app._open_image(app._EXAMPLES_DIR / "retriever.webp")]
     results = {}
 
     def generate(name, **kwargs):
@@ -132,8 +148,8 @@ def _upsample_without_fallback(app, monkeypatch, prompt, image_list=None):
     It returns the caller's prompt on any exception (after an st.warning, a
     no-op outside a Streamlit runtime), on a length cap-hit and on an empty
     decode -- so without these checks a broken real stack still yields a
-    non-empty string and passes. A cap-hit failing here is signal too: it
-    means the repetition guard regressed (0/100 measured on mlx-vlm 0.7.2).
+    non-empty string and passes. A cap-hit failing here is signal too: BFL's
+    captions measured 112-243 tokens against the 1024-token cap.
     """
     warning = Mock()
     monkeypatch.setattr(app.st, "warning", warning)
@@ -211,7 +227,7 @@ def test_prompt_upsampling_sees_multiple_images(app, monkeypatch):
     ``test_edit_accepts_the_pil_images_the_ui_builds`` on the mflux side.
     """
     request, paths = app.EDIT_EXAMPLES[0]
-    images = [Image.open(p) for p in paths]
+    images = [app._open_image(p) for p in paths]
     sizes = [i.size for i in images]
 
     enhanced = _upsample_without_fallback(app, monkeypatch, request, images)
@@ -220,3 +236,28 @@ def test_prompt_upsampling_sees_multiple_images(app, monkeypatch):
     assert not re.search(r"<\|[a-z_]+\|>", enhanced), enhanced
     # _vlm_images downscales copies; infer() still needs the originals.
     assert [i.size for i in images] == sizes
+
+
+def test_prefix_cache_works_across_rerun_threads(app, monkeypatch):
+    """APC stores MLX arrays, and MLX streams are per-thread -- the same trap
+    _materialized guards for mflux. Streamlit runs every rerun on a new
+    thread, so enhance on two successive threads, sharing the cached APC
+    pool, the way two Runs would."""
+    import threading
+
+    results = {}
+
+    def enhance(name, prompt):
+        try:
+            results[name] = _upsample_without_fallback(app, monkeypatch, prompt)
+        except BaseException as exc:  # surfaced below with the thread's name
+            results[name] = exc
+
+    for name, prompt in (("first", "a red bicycle"), ("second", "a blue kite")):
+        worker = threading.Thread(target=enhance, args=(name, prompt))
+        worker.start()
+        worker.join()
+        assert not isinstance(results[name], BaseException), (
+            f"{name}: {results[name]!r}"
+        )
+    assert app._get_apc().disk is None

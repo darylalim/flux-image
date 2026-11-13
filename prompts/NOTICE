@@ -1,0 +1,11 @@
+The prompt upsampling system prompts in pup_prompts_external_vlm.json are
+copied from Black Forest Labs' FLUX 3 Image Klein reference repository:
+
+  Source:  https://github.com/black-forest-labs/flux-3-image-klein
+  Path:    src/flux3/pup_prompts_external_vlm.json
+  Commit:  bfc8889a4497f846416f253a3972a1941ac698b9
+  License: Apache License 2.0 (full text in LICENSE, copied from the same commit)
+  Subset:  the "t2i" and "i2i" keys only; "t2i_bbox" and "i2i_bbox" are omitted.
+
+The prompt texts are unmodified. The upstream repository ships no NOTICE file
+of its own at that commit.

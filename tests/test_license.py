@@ -146,3 +146,36 @@ class TestLicenseTracked:
             check=True,
         ).stdout
         assert out.strip() == "LICENSE", "LICENSE is not git-tracked"
+
+
+class TestVendoredPromptNotice:
+    """BFL's prompts are Apache-2.0, and JSON cannot carry a notice, so a
+    LICENSE + NOTICE sidecar travels with them and names the source commit
+    that streamlit_app.py's loader comment cites."""
+
+    _DIR = _REPO_ROOT / "prompts"
+    _SHA = "bfc8889a4497f846416f253a3972a1941ac698b9"
+
+    def test_sidecar_files_exist_and_name_the_source(self):
+        license_text = (self._DIR / "LICENSE").read_text()
+        assert "Apache License" in license_text
+        assert "Version 2.0" in license_text
+        notice = (self._DIR / "NOTICE").read_text()
+        assert self._SHA in notice
+        assert "black-forest-labs/flux-3-image-klein" in notice
+
+    def test_the_loader_cites_the_same_commit(self):
+        app = (_REPO_ROOT / "streamlit_app.py").read_text()
+        assert self._SHA[:8] in app
+
+    def test_sidecar_is_git_tracked(self):
+        if shutil.which("git") is None:
+            pytest.skip("git not available")
+        tracked = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "ls-files", "prompts"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        for name in ("LICENSE", "NOTICE", "pup_prompts_external_vlm.json"):
+            assert f"prompts/{name}" in tracked, name
