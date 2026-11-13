@@ -996,6 +996,8 @@ Check all three at the screenshot viewports.
 
 > **FLUX.2 path (FLUX 3 shelved).** Read the steps below with these substitutions: (1) drift-check against `flux2-0.9.0-toolchain-2026-11-12`, not `golden-flux3-<rev>`; (2) the disk check only records numbers, since nothing is to be removed; (3) the notes' lead covers the Darkroom name, the light theme and the toolchain upgrade (edit Runs 4–18% slower, peak memory down ~8 GB), with no FLUX 3, license or upsampling-default items; (4) the repo description becomes `pyproject.toml`'s current one ("Darkroom: … with FLUX.2 Klein, …"). Topics: keep `flux2`, drop the `flux3` swap; the six other additions stay the owner's call.
 
+> **Done 2026-11-13, steps 1–3:** smoke 8/8 (126 s). The drift check `release-0.10.0-2026-11-13` vs `flux2-0.9.0-toolchain-2026-11-12` was bit-identical on all 10 cases, with enhanced prompts unchanged (t2i 26.3–26.4 s, edits 47.4–80.1 s, peak 9.5 / 12.0–14.2 GB). Disk: 210 GiB free, HF cache 26 repos / 84.0 GB, nothing to remove. Bumped to 0.10.0. Steps 3's notes lead and 4 wait for the owner's OK.
+
 After Phase 3 and a green `uv run pytest -m smoke`:
 
 1. **Drift check** against `golden-flux3-<rev>`. Phase 3 changed only UI and theme, so no image or enhanced prompt should move; any flag means the inference path changed by accident. Investigate it before bumping.
