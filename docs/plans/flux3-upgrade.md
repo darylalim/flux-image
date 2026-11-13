@@ -884,6 +884,13 @@ permissive", FLUX.2 "Apache-2.0") is false. The fix ships in that commit:
 
 ## Phase 3: rebrand to Darkroom (`feat/darkroom-rebrand`)
 
+> **Done 2026-11-13, on FLUX.2** (Phase 2 aborted). Deviations from the text below:
+> - **No subtitle under the title.** "Local image generation and editing with FLUX.2 Klein" wrapped to two lines at the 320px sidebar and pushed the closing model caption from y=841 to 901, past the 880px fold `SIDEBAR_WIDTH` was tuned for. The owner chose to merge it into that caption ("Local image generation and editing with FLUX.2 Klein 4B 8-bit · …"), which ends at 863. Main-area canvas geometry is unchanged (576² at 1440×880, 480² at 1280×720).
+> - **Light theme re-derived against 1.67.0's stock light** (`St`): every proposed value held except `redTextColor`, which was dropped. 1.67's opaque `#FFF1F2` fill gives stock `#9E303B` 6.50:1. `#F0F0F0` kept: it is 1.67's own in-sidebar tone `#F1F0EE`, neutralized. `_STOCK_LIGHT_ALERTS` became `_STOCK_ALERTS["light"]` with 1.67's opaque values.
+> - **`test_readme.py` did not already cover the light shot**: it parsed only `<img src>`, and `<picture>` names the light variant in `<source srcset>`. It now parses `srcset` and locks both heroes by name.
+> - **No license disclosure to re-read**: it was Phase 2 content and never shipped. README gained a non-affiliation sentence next to its first FLUX mention instead.
+> - Screenshots are a FLUX.2 generation (capybara, seed 20260923), not FLUX 3. The three visual checks passed in the browser on 1.67.0. `pyproject.toml`'s `description` is the FLUX.2 form of the Release step 4 text.
+
 - `APP_TITLE = "Darkroom"`, plus a subtitle naming the model descriptively. Check
   `page_title`, `st.title` and `st.logo` usage, and `tests/test_streamlit_app.py:192`.
   A subtitle line may shift the measured fold budget. Re-measure with the screenshot
@@ -986,6 +993,8 @@ primaryColor = "#B54602"              # deeper ember for slider values: 4.80:1
 Check all three at the screenshot viewports.
 
 ## Release
+
+> **FLUX.2 path (FLUX 3 shelved).** Read the steps below with these substitutions: (1) drift-check against `flux2-0.9.0-toolchain-2026-11-12`, not `golden-flux3-<rev>`; (2) the disk check only records numbers, since nothing is to be removed; (3) the notes' lead covers the Darkroom name, the light theme and the toolchain upgrade (edit Runs 4–18% slower, peak memory down ~8 GB), with no FLUX 3, license or upsampling-default items; (4) the repo description becomes `pyproject.toml`'s current one ("Darkroom: … with FLUX.2 Klein, …"). Topics: keep `flux2`, drop the `flux3` swap; the six other additions stay the owner's call.
 
 After Phase 3 and a green `uv run pytest -m smoke`:
 

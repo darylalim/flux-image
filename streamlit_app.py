@@ -14,7 +14,10 @@ from mlx_vlm.utils import load_config
 from PIL import Image
 from streamlit.runtime.media_file_storage import MediaFileStorageError
 
-APP_TITLE = "FLUX.2 Klein Studio"
+# The project's name, not a Black Forest Labs product: the model is named only
+# descriptively, as what the app runs, in the sidebar's closing caption (README
+# carries the non-affiliation line).
+APP_TITLE = "Darkroom"
 
 MAX_SEED = 2_147_483_647
 MAX_IMAGE_SIZE = 1024
@@ -49,8 +52,9 @@ CANVAS_HEIGHT_RATIO = 0.6
 CANVAS_MAX_HEIGHT = 660
 
 # Fill of the blank canvas that stands in for the picture before it exists.
-# Mid-gray at low alpha reads as a faint panel on both the stock light theme
-# and the graphite dark one, so no theme color is hard-coded.
+# Mid-gray at low alpha reads as a faint panel on both modes' pages (#FAFAFA
+# and #121212; checked in the browser on 1.67.0), so no theme color is
+# hard-coded.
 CANVAS_FILL = (128, 128, 128, 28)
 
 VLM_MODEL_ID = "mlx-community/Qwen3-VL-2B-Instruct-8bit"
@@ -670,8 +674,12 @@ if __name__ == "__main__":
             st.image(_ex_imgs, width=56)
 
         # App metadata closes the sidebar (Streamlit's layout guidance: settings
-        # and small app info there, content in main).
+        # and small app info there, content in main). It doubles as the
+        # subtitle naming the model: a separate caption under the title wraps
+        # to two lines at SIDEBAR_WIDTH and pushed this one from y=841 to 901,
+        # past an 880px fold; merged here it ends at 862 (1.67.0, 1440x880).
         st.caption(
+            "Local image generation and editing with "
             f"[FLUX.2 Klein 4B](https://huggingface.co/{MODEL_REPO}) 8-bit · "
             f"prompt upsampling by [Qwen3-VL 2B](https://huggingface.co/{VLM_MODEL_ID})"
             " · runs on MLX"
