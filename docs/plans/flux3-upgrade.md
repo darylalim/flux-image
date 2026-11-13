@@ -484,7 +484,8 @@ merge and CI. Deviations from the steps below:
     load: 3.4 s.
   - Edits: the 2-reference case 7 takes ~75 s (~18 s/step) and the
     single-reference edits 40–56 s.
-  - Peak MLX memory: 17.4 GB text-to-image, up to 20.9 GB edit.
+  - Peak MLX memory: 17.4 GB text-to-image, 17.2–19.6 GB edit (the repeat run:
+    18.6–20.9 GB edit with bit-identical images, so edit peaks vary by run).
   - The golden manifest carries an `amendments` entry. Its revision was
     filled in after the run, and the 426 s cold figure includes the download.
 - **Decided by the owner:** FLUX.2's own 2-reference edit already exceeds
