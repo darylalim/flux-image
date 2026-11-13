@@ -1,29 +1,34 @@
-# A dark-only custom theme; light mode stays Streamlit's stock light theme.
+# "Darkroom": one custom color theme in two modes, so switching modes changes
+# lightness, not identity.
 #
 # Mechanism (Streamlit frontend, re-read on 1.67.0: `On`/`Dn` in
 # static/js/utils.*.js, `xn`/`yn` in 1.64.0 -- minified names that move every
-# release): once [theme.light] or [theme.dark]
-# is populated the app offers System/Light/Dark, and each mode is built as the
-# top-level [theme] keys plus that mode's own table, merged onto the stock
-# palette of the same base. So every key lives in [theme.dark] or
-# [theme.dark.sidebar]: a top-level [theme] key or a [theme.sidebar] table would
-# leak into light mode, and a custom theme populating neither mode's table
-# collapses to one "Custom Theme" with no switcher (a lone `font` does that).
+# release): once [theme.light] or [theme.dark] is populated the app offers
+# System/Light/Dark, and each mode is built as the top-level [theme] keys plus
+# that mode's own table, merged onto the stock palette of the same base. So
+# every key lives in the four mode tables below: a top-level [theme] key or a
+# [theme.sidebar] table would leak into both modes, and a custom theme
+# populating neither mode's table collapses to one "Custom Theme" with no
+# switcher (a lone `font` does that).
 #
 # Colors only -- no font, size or radius keys. The canvas fold budget is
 # measured against stock metrics, a mode switch should change nothing but
 # color, and a Google Fonts URL would put a network fetch in a local app.
 #
-# The one light-mode difference no config can avoid: any custom theme sets
-# Streamlit's `secondary` color to primaryColor, so the Run progress bar is the
-# stock light primary instead of stock blue. Since 1.67's redesigned light
-# palette that is #C53948, 4.88:1 on its #F8F8F7 track (on 1.64 it was
-# #FF4B4B at 2.95:1, against blue's 3.48:1); the status label repeats "step k/n".
+# The two modes are complementary by rule (test_modes_are_complementary):
+#  1. Neutrals swap: light's page and text are dark's text and page, all R=G=B,
+#     so neither mode tints the image being judged.
+#  2. One brand color: primaryColor is the same ember in both modes.
+#  3. Accents mirror across their surface: same OKLCH hue, lightness flipped.
+#  4. Alert fills are shared: the same gold and slate tints at the same alpha.
+#  5. Panel steps are tuned per mode, not mirrored (see [theme.light]).
 #
-# TestThemeConfig locks this shape and the palette's WCAG AA contrast.
+# Any custom theme sets Streamlit's `secondary` color to primaryColor, so the
+# Run progress bar is the ember in both modes, on the panel-toned track.
+#
+# TestThemeConfig locks this shape, the rules and every pair's WCAG AA contrast.
 
-# "Darkroom": an R=G=B graphite surround, so a generated image is judged without
-# a color cast, lit by one ember accent in the warm family of light mode's red.
+# The dark mode: an R=G=B graphite surround, lit by one ember accent.
 [theme.dark]
 # Ember, OKLCH(0.570 0.163 43.5): bright, yet its white Run label clears AA
 # with margin (4.79:1; at this hue and chroma the ceiling is #C75213, 4.52:1;
@@ -55,3 +60,32 @@ blueTextColor = "#B4CBE6"
 # The sidebar draws primary as text (slider values) and has no white-label
 # button, so it takes the same hue and chroma lighter: 4.77:1 on the panel.
 primaryColor = "#E56E36"
+
+# The light mode: Darkroom for daylight. Designed against 1.67.0's stock light
+# (`St`: #FFFFFF / #F8F8F7, primary #C53948), whose unset keys still apply.
+[theme.light]
+# The shared ember (rule 2): white Run label 4.79:1, 4.59:1 on the page, and
+# its -15 HSL-lightness hover #793006 reads 8.9:1 here.
+primaryColor = "#C24E0A"
+# Dark's textColor (rule 1): not pure white, to cut glare around a picture.
+backgroundColor = "#FAFAFA"
+# Prompt field, progress track and, by fallback, the sidebar. Mirroring dark's
+# page-to-panel ratio (1.25) gave #E2E2E2, too heavy, and pushed the caption
+# link to near-black; this is 1.67's own in-sidebar tone #F1F0EE, neutralized.
+secondaryBackgroundColor = "#F0F0F0"
+# Dark's backgroundColor (rule 1), pinned like dark's textColor.
+textColor = "#121212"
+# Deep ember at dark linkColor's hue (rule 3); through the 0.6 caption opacity
+# it renders #786560, 4.81:1 (stock #244FB4 renders 2.87:1 there).
+linkColor = "#280900"
+# Dark's gold and slate fills (rule 4) under text at the same hues, deepened.
+yellowBackgroundColor = "#E9AB2B29"
+yellowTextColor = "#7D5E01"
+blueBackgroundColor = "#5B8FD624"
+blueTextColor = "#36669B"
+# Red stays stock: 1.67's opaque #FFF1F2 fill gives #9E303B 6.50:1.
+
+[theme.light.sidebar]
+# Deeper than the brand ember here, as dark's is lighter (rule 3): 4.80:1 for
+# the slider values on the panel.
+primaryColor = "#B54602"

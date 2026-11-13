@@ -1,7 +1,7 @@
 [project]
 name = "flux-image"
 version = "0.9.0"
-description = "Streamlit application for generating and editing images using Black Forest Labs FLUX.2 Klein on Apple Silicon with MLX."
+description = "Darkroom: local image generation and editing on Apple Silicon with FLUX.2 Klein, built on MLX and Streamlit, with vision-aware prompt upsampling by Qwen3-VL."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"

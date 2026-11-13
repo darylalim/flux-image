@@ -20,15 +20,17 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _README = _REPO_ROOT / "README.md"
 
-# The two ways an image reaches the rendered README: Markdown ``![alt](path)``
-# and HTML ``<img src="path">`` (the hero and editing-example inputs use HTML so
-# they can set width/alt).
+# The three ways an image reaches the rendered README: Markdown ``![alt](path)``,
+# HTML ``<img src="path">`` (the hero and editing-example inputs use HTML so
+# they can set width/alt), and a ``<picture>``'s ``<source srcset="...">``, which
+# is how the hero serves its light variant to a light-mode reader.
 _MD_IMG_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 _HTML_IMG_RE = re.compile(r"""<img\b[^>]*?\bsrc=["']([^"']+)["']""", re.IGNORECASE)
+_SRCSET_RE = re.compile(r"""<source\b[^>]*?\bsrcset=["']([^"']+)["']""", re.IGNORECASE)
 
-# The studio hero is the point of the screenshots change; lock it by name so it
-# can't silently vanish while other images keep the suite green.
-_HERO_SCREENSHOTS = ("docs/screenshot-dark.png",)
+# The hero pair, one per color scheme; lock both by name so neither can
+# silently vanish while other images keep the suite green.
+_HERO_SCREENSHOTS = ("docs/screenshot-dark.png", "docs/screenshot-light.png")
 
 
 def _local_image_refs():
@@ -40,6 +42,9 @@ def _local_image_refs():
     # space), so it must NOT be split.
     refs = [m.strip().split()[0] for m in _MD_IMG_RE.findall(text) if m.strip()]
     refs += [m.strip() for m in _HTML_IMG_RE.findall(text) if m.strip()]
+    # A srcset is a comma-separated candidate list, each "url [descriptor]".
+    for srcset in _SRCSET_RE.findall(text):
+        refs += [c.split()[0] for c in srcset.split(",") if c.strip()]
     local = []
     for ref in refs:
         ref = ref.split("#", 1)[0]  # drop any ``#anchor``
