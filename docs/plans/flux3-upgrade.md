@@ -8,6 +8,11 @@ session, one phase per topic branch, each green on the four gates before merge
 
 Read this first. Everything below is detail.
 
+> **2026-11-13: FLUX 3 shelved.** Phase 2 took the abort path: edit case 8
+> runs 140 s (Q8) / 145 s (Q6) at 12 steps against a ≤ 80.8 s budget, on every
+> VLM rung. `feat/flux3-klein` is an unmerged record. Next is Phase 3 on
+> FLUX.2, then Release. See "FLUX 3 shelved" under Phase 2.
+
 ```text
 Phase 1a  hygiene + baseline      cache guard, .gitignore, example licenses, eval set, FLUX.2 golden run (old lock)
    │       gate: four gates, CI
@@ -635,6 +640,92 @@ to one side or the other. Starts from Phase 1a merged; one session.
 5. Commit `chore(deps): upgrade all dependencies to latest`, with the version table and test fixes in the body.
 
 ## Phase 2: model swap (`feat/flux3-klein`, commit as `feat!:`)
+
+> **Start of Phase 2 (2026-11-13).**
+> - **The owner's cache answer: free nothing.** Asked once before the first
+>   download, with `hf cache ls` (26 repos, 84.0 GB) and 214 GiB free. Ask
+>   again only if a download would cross the 15 GB floor.
+> - **mflux 0.23 Facts re-read on 0.24.0: all hold.** Same classes on the
+>   shared `_Flux3KleinCore`, same signatures (the edit's `image_paths` is
+>   required, no default), `PIL.Image.open` on every path, `prompt_cache`
+>   never pruned, guidance nulled on the distilled checkpoint, 16 steps by
+>   default, the same reference limits (`MAX_REFERENCES = 10`, 4 MP / 1 MP),
+>   16-rounding in `Config`, and `ModelRevisions.PINNED` still lists only
+>   BFL's two repos.
+> - **All five pinned SHAs are still Hub `main`.** Full-repo sizes: Q8 9.92 GB,
+>   Q6 7.63 GB, 8B-4bit 5.78 GB, 4B-8bit 5.12 GB, 2B-8bit 2.66 GB. The Q8
+>   snapshot took 9m37s and lists with an empty `refs` column, as predicted.
+> - **BFL at `bfc8889a`:** the external prompts are 7,410 / 1,002 words as
+>   recorded; `pup.py`'s scaffold, decoding and `policy_reference` match the
+>   Facts; there is **no `NOTICE` file** to copy, so `prompts/NOTICE` is ours.
+> - **mlx-vlm 0.7.12's APC has a disk tier.** `mlx_vlm.apc.from_env()` adds
+>   a 20 GB SSD store under `~/.cache/mlx-vlm` by default. `APCManager()`
+>   built directly has `disk=None`, so the app builds it directly
+>   (`test_the_prefix_cache_is_memory_only`). `presence_penalty`,
+>   `apc_manager` and `enable_thinking` are all `generate()` kwargs on 0.7.12.
+> - **Open question 2, the ty half: the plan's single-base form passes.**
+>   `class _Flux3KleinAnyMode(Flux3KleinEdit)` with
+>   `generate_text_image = Flux3Klein.generate_image` type-checks, call site
+>   included (`_get_model` is annotated so ty sees it). Inheriting from both
+>   classes fails ty (`incompatible-method-override`: the two
+>   `generate_image` signatures conflict).
+> - **Test seam deviation.** A `MagicMock` cannot be a base class, so the
+>   suite patches the two mflux classes with small stub classes whose
+>   `__new__` returns the mock model (`_flux_stubs`), not with mocks.
+> - **The reference cap applies to example images too**, not only uploads:
+>   `AppTest` cannot drive `st.file_uploader`, and one rule is simpler.
+> - **Interim title** `FLUX 3 Klein Studio` until Phase 3's Darkroom rename;
+>   "FLUX.2 Klein Studio" would be false from this commit on.
+
+### FLUX 3 shelved (2026-11-13): no combination passes the edit-time gate
+
+**Decided (owner, 2026-11-13): take the abort path.** `feat/flux3-klein` is
+not merged; it is kept as a record (the code above, tests green). Measured on
+the M2 Max 32 GB, mflux 0.24.0, mlx 0.32.4, mlx-vlm 0.7.12, through the app's
+real `infer()`/`_resolve_prompt` path. Scripts and JSON results were scratch
+files; the figures are here and in the branch's commit body.
+
+**The binding gate is edit time, and it is independent of the VLM.** Edit
+case 8 (1 reference, `mug.webp`, 768×1024) has a budget of ≤ 80.8 s (2× FLUX.2's
+40.4 s). FLUX alone, no VLM loaded, upsampling off, no swapping (0 swap-outs
+during the run), at **12 steps, the lowest rung the plan allows**:
+
+| Build | Case 8 edit | Case 7 edit (≤ 149.8 s) | t2i 768², 12 steps | t2i 1024², 16 steps | Peak `phys_footprint`, MLX cache capped at 1 GB |
+|---|---|---|---|---|---|
+| Q8 @ `7e46237` | **140.2 s** (11.5 s/step) | **273.3 s** (22.0 s/step, uncapped run) | 47.0 s | 117.2 s (uncapped run) | 13.8 GB (vmmap lifetime peak) |
+| Q6 @ `ace0557` | **144.5 s** (11.9 s/step) | not run | 48.7 s | not run | 11.9 GB |
+
+- **Per combination.** Diffusion time does not depend on the VLM, so every VLM
+  rung inherits its build's edit figure: (1) 8B-4bit + Q8, (3) 4B-8bit + Q8
+  and (4) 2B-8bit + Q8 fail at 140.2 s, and (2) 8B-4bit + Q6 at 144.5 s.
+  Quality was never scored: no combination reached it.
+- **Memory, combination 1 as shipped** (Q8 + 8B, upsampling on, MLX cache
+  uncapped, the budget's t2i → 3-reference edit → t2i sequence): **27.7 GB**
+  lifetime peak (`sample`'s "Physical footprint (peak)"), 26.0 GB on the 1 Hz
+  `footprint -p` sampler (per phase: t2i 24.0, edit 26.0, t2i 24.0). Over the
+  26 GB gate, and the machine swapped (~1M swap-outs, 4.2 GB swap), which
+  inflated that run's times (t2i diffusion 132 s; the 3-reference edit
+  536.8 s; 8B enhancement 36.8 s cold, 15.4 s warm). `mx.set_cache_limit(1 GB)`
+  is the plan's first memory lever and brings FLUX alone to 13.8 GB, so memory
+  looked fixable; time did not.
+- **Text-to-image was passable** at the 768² + 12-step levers (47–49 s of
+  diffusion, leaving ~11 s for a warm APC enhancement, ~4 s on 8B).
+- **What a pass would need:** ≤ 7 steps for case 8 (≈ 11.5 s/step), below the
+  plan's 12-step rung. Fewer steps, a different edit budget, a 3-bit or
+  third-party build, or CPU offload are new decisions for the owner, not
+  fallbacks.
+- **Disk:** Q8 (9.9 GB) and Q6 (7.6 GB) are both in the HF cache, detached
+  (pinned by SHA, empty `refs`). Free is 194 GiB. Remove them with
+  `hf cache rm` only with the owner's OK, never `hf cache prune`.
+
+**Revisit when** an official `mlx-community` FLUX 3 build lands, an mflux
+release speeds up Flux3 reference conditioning or adds memory work, or the
+hardware changes. Then re-run the same three gates, starting with edit case 8.
+
+**Next:** ship Phase 1a/1b plus Phase 3's FLUX-independent parts (the Darkroom
+name, the light theme) on FLUX.2, as 0.10.0 if the light theme lands (0.9.1
+otherwise). The FLUX 3 license disclosure and the GitHub topic swap do not
+ship. Re-check that the README and repo details still say FLUX.2.
 
 ### Exit criteria: ship or abort (decided 2026-10-21, before starting)
 
