@@ -1077,11 +1077,69 @@ the need is only "see how this image was made".
   - the history click restoring the widget values.
 - **Docs:** replace the "app writes no outputs to disk" Rule and the matching CLAUDE.md gotcha with the cap. Add Do-not-touch rows for the cap and for the threading choice, naming their tests. Mirror the README (Usage, and where history lives on disk).
 
-## Possible Phase 6: a measured canvas that adapts to the display (not scheduled)
+## Phase 6: a measured canvas that adapts to the display (implemented 2026-11-13)
 
 Agreed 2026-10-21. It is a separate release after 0.10.0, on its own branch
 (`feat/measured-canvas`), because it rewrites the canvas's measured invariants
 and their Do-not-touch rows.
+
+### As built (2026-11-13, Streamlit 1.67.0): where it departs from the design below
+
+The design below was written against 1.64. Re-checked on 1.67.0 first:
+`st.context` still has no viewport size and `st.image` still has no `height`,
+so the probe is still needed. Measured in headless Chrome over CDP at dpr 1.
+Four departures, each forced by a measurement or by the upstream source:
+
+1. **A fragment, not a pause.** `data={"paused": True}` on the Run branch
+   cannot work: a finished Run draws nothing after it, so the probe would stay
+   paused, and a resize after a Run would be lost until the next click.
+   Instead the probe is mounted inside an `@st.fragment`. In 1.67.0
+   (`_fragment_run_should_not_preempt_script` in
+   `runtime/scriptrunner_utils/script_requests.py`), a widget change inside a
+   fragment *queues* its rerun behind a running script instead of preempting
+   it. The fragment compares the report with the one the canvas was drawn
+   with (`_drawn_viewport`) and calls `st.rerun()` only when they differ.
+   Browser-verified: a resize from 1440×880 to 1280×720 at step 1/4 let all
+   4 steps finish, and the result then redrew at 500² for the new window. A
+   test pins the upstream function, so an upgrade that changes it fails.
+2. **The probe draws last in main and does not measure `top`.** A zero-height
+   CCv2 element still takes the main column's 16px gap. Above the canvas it
+   moved the picture from y=152 to y=168, breaking "fallback = today,
+   exactly". Measuring its own top above the canvas has a second flaw: a run
+   notice drawn above it would move it, its report would trigger a rerun, and
+   that rerun would erase the notice. The prompt form spans y=96–136 at every
+   width from 390 to 2560px, so the canvas top is a constant, `CANVAS_TOP =
+   152`. The probe reports only `{vh, main_w}`.
+3. **`CANVAS_UNDER = 60`, not a 30px caption.** The idle swatch's two-line
+   placeholder takes 8 + 51px under the picture, and the status header 9 +
+   38px; the seed caption's 30 would clip both. Plus `CANVAS_BOTTOM_GAP = 8`.
+4. **`parentElement` is a `ShadowRoot`** under `isolate_styles=True`, and has
+   no `getBoundingClientRect()`. The JS measures `parentElement.host`. Buckets
+   are floored, not rounded, so a report never overstates the room.
+
+`st.image(alt=…)` shipped as designed. The result's alt is the prompt that
+made it, truncated; it is stored as `result_prompt` on success.
+
+Measured result (1.67.0, idle square; caption or placeholder always on screen):
+
+| Viewport | Fallback (today) | Measured |
+|---|---|---|
+| 1440×880, sidebar open | 576² | 660² |
+| 1440×880, collapsed | 660² | 660² |
+| 1280×720, collapsed | 660², clips | 500² |
+| 1366×768, collapsed | 660², clips | 548² |
+| 1920×1080, collapsed | 660² | 860² |
+| 641 / 640 × 700 | 365² / 608², clips | 476² / 476² |
+| 820×1180 | 0.6 × width | 464² |
+| 2560×1440 | 660² | 1024² (the image's own size) |
+| 390×844 | 358² | 352² |
+| 300×300 | — | 256² (floor; scrolls) |
+
+Mutants checked, each failing the test that guards it: drop the floor, allow
+upscaling, `vh` without the canvas top, re-add the columns, drop the fragment,
+move the probe above the canvas, and rerun unconditionally (a loop).
+
+### The design as agreed (2026-10-21, against 1.64)
 
 **Why the canvas can't adapt today.** Streamlit gives Python no viewport size
 (`st.context` has none in 1.64.0 or 1.66.1, verified), and `st.image` has no

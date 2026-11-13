@@ -19,7 +19,7 @@ Darkroom is a Streamlit application for local image generation and editing on Ap
 - Unified generation and editing — text-to-image by default; uploading one or more images switches to editing automatically
 - 8-bit quantized weights — an 8.6GB download instead of 16GB, with no local quantization pass at load (see Requirements for the memory picture, which is a separate question from download size)
 - Native Apple Silicon performance via MLX — inference runs on MLX, not PyTorch
-- Sidebar + canvas layout: input images, settings and examples live in the sidebar; the main area is a full-width prompt bar over a canvas sized to keep the whole image and its seed on screen
+- Sidebar + canvas layout: input images, settings and examples live in the sidebar; the main area is a full-width prompt bar over a canvas that measures your browser window and sizes the image to the room on screen, keeping the whole image and its seed above the fold (up to the image's own size, never upscaled)
 - Enter to run — the prompt row is a borderless form, so pressing Enter submits the run
 - Multi-image upload for editing and compositing workflows
 - Auto-dimension: width/height sliders adjust to match the first input image's aspect ratio
@@ -48,7 +48,7 @@ The app loads [`mlx-community/flux2-klein-4b-8bit`](https://huggingface.co/mlx-c
 
 ## Usage
 
-The studio opens with input images, settings and examples in the sidebar, and a prompt bar over the canvas. Until the first run, a blank canvas previews the output size. On narrow windows the sidebar collapses behind the » toggle, but the prompt bar and the canvas stay put.
+The studio opens with input images, settings and examples in the sidebar, and a prompt bar over the canvas. Until the first run, a blank canvas previews the output size. On narrow windows the sidebar collapses behind the » toggle, but the prompt bar and the canvas stay put. The canvas follows the window: resize it or collapse the sidebar and the picture resizes to fit (a resize during a run takes effect once the run finishes, never interrupting it).
 
 **Text-to-image** — type a prompt, then press **Enter** or click **Run**. The generated image appears on the canvas, labeled with the seed used.
 

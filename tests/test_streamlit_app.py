@@ -1037,6 +1037,250 @@ class TestCanvasGeometry:
             660,
         )
 
+    def test_the_fold_model_starts_where_the_canvas_does(self):
+        # The fallback model and the measured path share one canvas top.
+        import streamlit_app as app
+
+        assert app.CANVAS_TOP == self._CANVAS_TOP
+
+
+def _report(vh, main_w):
+    """A viewport probe report, floored to 8px buckets as its JS does."""
+    return {"vh": vh // 8 * 8, "main_w": main_w // 8 * 8}
+
+
+def _walk(node):
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(getattr(current, "children", {}).values())
+
+
+class TestMeasuredCanvas:
+    """Once the viewport probe has reported {vh, main_w}, the canvas is sized to
+    the real room on screen; without a report it keeps the fallback geometry
+    TestCanvasGeometry models."""
+
+    # (viewport width, height, main-area width as the probe measured it):
+    # measured in headless Chrome on 1.67.0 at dpr 1 (2026-11-13), sidebar open
+    # unless it auto-collapses at that width or the row says collapsed. The
+    # fallback geometry clips the collapsed 1280x720, 1366x768 and 1440x790
+    # rows and jumps between 641 and 640; these must all fit.
+    _MEASURED_VIEWPORTS = [
+        (1440, 880, 949),
+        (1440, 880, 1269),  # collapsed
+        (1280, 720, 789),
+        (1280, 720, 1109),  # collapsed
+        (1366, 768, 1195),  # collapsed
+        (1440, 790, 1269),  # collapsed
+        (1920, 1080, 1749),  # collapsed
+        (2560, 1440, 2080),
+        (2560, 1440, 2400),  # collapsed
+        (820, 1180, 468),  # tablet portrait
+        (641, 700, 598),
+        (640, 700, 597),
+        (390, 844, 358),  # phone
+    ]
+    _SIZES = [(1024, 1024), (672, 1024), (1024, 576), (256, 1024), (512, 512)]
+
+    def test_picture_and_text_under_it_fit_every_measured_viewport(self):
+        import streamlit_app as app
+
+        for vw, vh, main_w in self._MEASURED_VIEWPORTS:
+            viewport = _report(vh, main_w)
+            for w, h in self._SIZES:
+                drawn = app._measured_display_width(w, h, viewport)
+                assert drawn is not None
+                assert drawn <= main_w, (vw, vh, main_w, (w, h), drawn)
+                assert drawn <= w  # never upscaled
+                bottom = app.CANVAS_TOP + drawn * h / w + app.CANVAS_UNDER
+                assert bottom <= vh, (vw, vh, main_w, (w, h), bottom)
+
+    def test_room_is_used_when_there_is_room(self):
+        # The point of measuring: where today's fixed cap leaves height unused,
+        # the measured canvas takes it. A square at 1920x1080 collapsed grows
+        # past the 660 cap; at 2560x1440 it reaches the image's own width.
+        import streamlit_app as app
+
+        assert app._measured_display_width(1024, 1024, _report(1080, 1749)) > (
+            app.CANVAS_MAX_HEIGHT
+        )
+        assert app._measured_display_width(1024, 1024, _report(1440, 2080)) == 1024
+
+    def test_no_jump_where_the_fallback_columns_stack(self):
+        import streamlit_app as app
+
+        at_641 = app._measured_display_width(1024, 1024, _report(700, 598))
+        at_640 = app._measured_display_width(1024, 1024, _report(700, 597))
+        assert abs(at_641 - at_640) <= 8  # one bucket, not 365 -> 608
+
+    def test_a_tiny_window_floors_the_height_and_scrolls(self):
+        import streamlit_app as app
+
+        drawn = app._measured_display_width(1024, 1024, _report(300, 1000))
+        assert drawn == app.CANVAS_MIN_HEIGHT
+        # A portrait's floor is on its height, not its width.
+        drawn = app._measured_display_width(512, 1024, _report(300, 1000))
+        assert drawn == app.CANVAS_MIN_HEIGHT // 2
+
+    def test_a_small_result_is_not_upscaled(self):
+        import streamlit_app as app
+
+        assert app._measured_display_width(512, 512, _report(1440, 2080)) == 512
+
+    def test_the_canvas_top_is_subtracted(self):
+        # vh alone would let a square at 1280x720 run 152px past the fold.
+        import streamlit_app as app
+
+        drawn = app._measured_display_width(1024, 1024, _report(720, 1109))
+        assert drawn == (
+            720 - app.CANVAS_TOP - app.CANVAS_UNDER - app.CANVAS_BOTTOM_GAP
+        )
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            {},
+            {"size": None},
+            {"size": {"vh": 880}},
+            {"size": {"vh": "tall", "main_w": 900}},
+            {"size": {"vh": 0, "main_w": 900}},
+            {"size": {"vh": 880, "main_w": -1}},
+            None,
+            "junk",
+        ],
+    )
+    def test_no_or_malformed_report_selects_the_fallback(self, state):
+        import streamlit_app as app
+
+        assert app._viewport(state) is None
+        assert app._measured_display_width(1024, 1024, app._viewport(state)) is None
+
+    def test_a_report_reads_back_as_ints(self):
+        import streamlit_app as app
+
+        state = {"size": {"vh": 880.0, "main_w": 944, "extra": 1}}
+        assert app._viewport(state) == {"vh": 880, "main_w": 944}
+
+    def test_layout_constants_are_the_measured_ones(self):
+        # Measured with the shoot recipe in CLAUDE.md on 1.67.0: the canvas
+        # top, and the idle placeholder's two lines under the swatch (8px gap
+        # + 51px), the tallest text drawn under the picture. Re-measure before
+        # changing them; the fit test above trusts them.
+        import streamlit_app as app
+
+        assert (
+            app.CANVAS_TOP,
+            app.CANVAS_UNDER,
+            app.CANVAS_BOTTOM_GAP,
+            app.CANVAS_MIN_HEIGHT,
+        ) == (152, 60, 8, 256)
+
+    def test_the_app_draws_the_reported_size_without_columns(self):
+        import streamlit_app
+
+        with _app_test() as app:
+            app.session_state[streamlit_app.VIEWPORT_KEY] = {"size": _report(720, 1109)}
+            at = app.run(timeout=10)
+            assert not at.exception
+            center, frame = _find_canvas(at)
+            assert frame.proto.width_config.pixel_width == (
+                streamlit_app._measured_display_width(1024, 1024, _report(720, 1109))
+            )
+            assert center.proto.flex_container.align == (
+                center.proto.flex_container.ALIGN_CENTER
+            )
+            # Centered without st.columns, which stack at 640px.
+            assert not any(
+                getattr(node, "type", None) == "column" for node in _walk(at.main)
+            )
+            assert at.session_state["_drawn_viewport"] == _report(720, 1109)
+
+    def test_without_a_report_the_canvas_keeps_the_fallback(self):
+        import streamlit_app
+
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert at.session_state["_drawn_viewport"] is None
+            assert _canvas_frame(at).proto.width_config.pixel_width == (
+                streamlit_app._canvas_display_width(1024, 1024)
+            )
+            assert any(
+                getattr(node, "type", None) == "column" for node in _walk(at.main)
+            )
+
+    def test_a_measured_result_keeps_its_own_size(self):
+        import streamlit_app
+
+        with _app_test() as app:
+            app.session_state[streamlit_app.VIEWPORT_KEY] = {
+                "size": _report(1440, 2080)
+            }
+            app.session_state["result_image"] = Image.new("RGB", (512, 512))
+            app.session_state["result_seed"] = 7
+            at = app.run(timeout=10)
+            assert not at.exception
+            assert _canvas_frame(at).proto.width_config.pixel_width == 512
+
+    def test_the_probe_draws_last_in_main(self):
+        # A zero-height element still takes the column's 16px gap, so above
+        # the canvas it would push the picture off the CANVAS_TOP it is sized
+        # from (measured: 152 -> 168).
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            probe = _main_position(at, "bidi_component")
+            assert probe == max(at.main.children)
+            assert probe > _main_position(at, "image")
+
+    def test_the_probe_runs_in_a_fragment(self):
+        # In a fragment, a report that lands mid-Run queues instead of
+        # cancelling the generation (see the upstream pin below).
+        import streamlit as st
+
+        fragments = []
+
+        def recording_fragment(func=None, **kwargs):
+            if func is not None:
+                fragments.append(func.__name__)
+                return real_fragment(func, **kwargs)
+            return real_fragment(**kwargs)
+
+        real_fragment = st.fragment
+        with _app_test() as app, patch("streamlit.fragment", recording_fragment):
+            at = app.run(timeout=10)
+            assert not at.exception
+        assert "_probe_viewport" in fragments
+
+    def test_canvas_pictures_carry_alt_text(self):
+        def canvas_alt(at):
+            frame = _canvas_frame(at)
+            image = next(
+                c for c in frame.children.values() if getattr(c, "type", "") == "image"
+            )
+            return image.proto.imgs[0].alt
+
+        with _app_test() as app:
+            at = app.run(timeout=10)
+            assert canvas_alt(at) == "Empty canvas, 1024 × 1024"
+            at.text_input(key="prompt_input").set_value("a cat")
+            next(b for b in at.button if b.label == "Run").click().run(timeout=10)
+            assert not at.exception
+            assert canvas_alt(at) == "a cat"
+
+    def test_a_fragment_rerun_does_not_preempt_a_running_script(self):
+        # The upstream behavior the fragment relies on (Streamlit 1.67.0):
+        # an interaction inside a fragment queues its rerun behind a running
+        # script; only st.rerun(scope="fragment") preempts. If an upgrade
+        # changes this, a resize mid-Run would cancel the generation.
+        from streamlit.runtime.scriptrunner_utils.script_requests import (
+            _fragment_run_should_not_preempt_script,
+        )
+
+        assert _fragment_run_should_not_preempt_script(["probe"], False)
+        assert not _fragment_run_should_not_preempt_script(["probe"], True)
+        assert not _fragment_run_should_not_preempt_script([], False)
+
 
 class TestVLMInit:
     def test_vlm_loads_correct_model(self):
