@@ -51,6 +51,88 @@ SIDEBAR_WIDTH = 320
 CANVAS_HEIGHT_RATIO = 0.6
 CANVAS_MAX_HEIGHT = 660
 
+# The measured canvas. Once the viewport probe below has reported the browser's
+# size, the bounds above give way to the real room on screen: a picture is
+# drawn at min(main-area width, (viewport height - CANVAS_TOP - CANVAS_UNDER -
+# CANVAS_BOTTOM_GAP) x aspect, its own width). The constants above remain the
+# fallback for every render without a measurement (first paint, AppTest, JS
+# disabled). Measured on 1.67.0 at dpr 1 (2026-11-13):
+#  - CANVAS_TOP: where the canvas starts (header, top padding, prompt bar,
+#    gap). The prompt form spans y=96-136 at every width from 390 to 2560px,
+#    so it is a constant, not something the probe has to report.
+#  - CANVAS_UNDER: the tallest line set drawn under the picture -- the idle
+#    swatch's two-line placeholder (8px gap + 51px), which also covers the
+#    seed caption (8 + 22px).
+#  - CANVAS_BOTTOM_GAP: breathing room between that text and the fold.
+#  - CANVAS_MIN_HEIGHT: a picture is never drawn shorter than this, so a tiny
+#    window scrolls rather than shrinking it to nothing.
+CANVAS_TOP = 152
+CANVAS_UNDER = 60
+CANVAS_BOTTOM_GAP = 8
+CANVAS_MIN_HEIGHT = 256
+
+# Session-state key the viewport probe reports under.
+VIEWPORT_KEY = "viewport_probe"
+
+# The viewport probe: an inline CCv2 component that draws nothing and reports
+# {vh, main_w} -- the window's height and the main area's width -- floored to
+# 8px buckets, so a report never overstates the room. A ResizeObserver on its
+# host catches sidebar collapse/expand and width changes, a resize listener the
+# window's height; it emits only on a bucket change, and ignores height-only
+# changes under 10% (a phone's address bar showing and hiding). With
+# isolate_styles (the default) parentElement is a ShadowRoot, which has no
+# geometry, so it measures the shadow host. It is drawn last in main: a
+# zero-height element still takes the column's 16px gap, which would push the
+# canvas down if it sat above it.
+_VIEWPORT_PROBE_JS = """
+const PROBES = new WeakMap()
+
+export default function (component) {
+  const { parentElement, setStateValue } = component
+  const host = parentElement.host ?? parentElement
+  const existing = PROBES.get(host)
+  if (existing) return existing
+
+  const BUCKET = 8
+  const bucket = (v) => Math.floor(v / BUCKET) * BUCKET
+  let last = null
+  let timer = null
+
+  const measure = () => {
+    const next = {
+      vh: bucket(window.innerHeight),
+      main_w: bucket(host.getBoundingClientRect().width),
+    }
+    if (
+      last &&
+      next.main_w === last.main_w &&
+      Math.abs(next.vh - last.vh) < last.vh * 0.1
+    ) {
+      return
+    }
+    last = next
+    setStateValue("size", next)
+  }
+  const schedule = () => {
+    clearTimeout(timer)
+    timer = setTimeout(measure, 200)
+  }
+
+  const observer = new ResizeObserver(schedule)
+  observer.observe(host)
+  window.addEventListener("resize", schedule)
+  const cleanup = () => {
+    observer.disconnect()
+    window.removeEventListener("resize", schedule)
+    clearTimeout(timer)
+    PROBES.delete(host)
+  }
+  PROBES.set(host, cleanup)
+  schedule()
+  return cleanup
+}
+"""
+
 # Fill of the blank canvas that stands in for the picture before it exists.
 # Mid-gray at low alpha reads as a faint panel on both modes' pages (#FAFAFA
 # and #121212; checked in the browser on 1.67.0), so no theme color is
@@ -362,6 +444,39 @@ def _canvas_display_width(width, height):
     return max(1, round(CANVAS_MAX_HEIGHT * width / height))
 
 
+def _viewport(state):
+    """The probe's last report as {vh, main_w} ints, or None.
+
+    None -- nothing reported yet, or a malformed report -- selects the fallback
+    geometry, so a probe failure can only ever cost the adaptive sizing.
+    """
+    size = state.get("size") if hasattr(state, "get") else None
+    if not hasattr(size, "get"):
+        return None
+    try:
+        viewport = {k: int(size.get(k)) for k in ("vh", "main_w")}
+    except (TypeError, ValueError):
+        return None
+    if viewport["vh"] <= 0 or viewport["main_w"] <= 0:
+        return None
+    return viewport
+
+
+def _measured_display_width(width, height, viewport):
+    """Pixel width at which a width x height picture fits the measured viewport.
+
+    The least of the main area's width, the width at which picture and caption
+    end CANVAS_BOTTOM_GAP above the fold (never under CANVAS_MIN_HEIGHT tall),
+    and the picture's own width, so it is never upscaled. None without a
+    measurement.
+    """
+    if viewport is None or width <= 0 or height <= 0:
+        return None
+    room = viewport["vh"] - CANVAS_TOP - CANVAS_UNDER - CANVAS_BOTTOM_GAP
+    by_height = max(CANVAS_MIN_HEIGHT, room) * width / height
+    return max(1, round(min(viewport["main_w"], by_height, width)))
+
+
 def _blank_canvas(width, height):
     """The empty canvas: a CANVAS_FILL swatch with the output's aspect ratio.
 
@@ -371,15 +486,22 @@ def _blank_canvas(width, height):
     return Image.new("RGBA", (max(1, width // 32), max(1, height // 32)), CANVAS_FILL)
 
 
-def _canvas(width, height):
+def _canvas(width, height, viewport=None):
     """The container a width x height picture is drawn in, centered in main.
 
-    Its width is the picture's drawn width -- the lesser of the column share
-    (the ratio bound) and _canvas_display_width (the pixel cap; Streamlit caps
-    an int container width to its parent) -- so a width="stretch" picture
-    fills it exactly and its caption and the run status line up with the
-    picture's edges. Calls st.columns, so only the UI block may call it.
+    Its width is the picture's drawn width, so a width="stretch" picture fills
+    it exactly and its caption and the run status line up with the picture's
+    edges. Measured, that is _measured_display_width, centered without columns
+    (so nothing stacks at 640px). Unmeasured, it is the lesser of the column
+    share (the ratio bound) and _canvas_display_width (the pixel cap; Streamlit
+    caps an int container width to its parent). Calls st.columns, so only the
+    UI block may call it.
     """
+    measured = _measured_display_width(width, height, viewport)
+    if measured is not None:
+        return st.container(horizontal_alignment="center").container(
+            width=measured, gap="xsmall"
+        )
     spec = _canvas_spec(width, height)
     column = st.columns(spec, gap=None)[1] if spec else st.container()
     return column.container(horizontal_alignment="center").container(
@@ -491,6 +613,36 @@ if __name__ == "__main__":
     # The enhanced prompt the model actually received, under the canvas: in
     # main, and below the picture so its height never pushes the picture down.
     enhanced_slot = st.empty()
+
+    # The viewport probe draws last in main, after everything it could move:
+    # it has no height, but still takes the column's 16px gap.
+    probe_slot = st.container()
+
+    # The viewport the canvas is sized to this run (None = fallback geometry),
+    # read once, before anything draws, and recorded so the probe can tell a
+    # fresh report from the one already drawn.
+    viewport = _viewport(st.session_state.get(VIEWPORT_KEY, {}))
+    st.session_state._drawn_viewport = viewport
+
+    _viewport_probe = st.components.v2.component(
+        "viewport_probe", html="<div></div>", js=_VIEWPORT_PROBE_JS
+    )
+
+    # In a fragment on purpose: a widget change inside a fragment queues its
+    # rerun instead of preempting a running script (_fragment_run_should_not_
+    # preempt_script in 1.67.0), so a resize mid-Run can never interrupt the
+    # generation; the report is handled once the Run ends. A full rerun
+    # follows only when the report differs from what was drawn, so the full
+    # run that draws a report never reruns again.
+    @st.fragment
+    def _probe_viewport():
+        _viewport_probe(key=VIEWPORT_KEY, height="content", on_size_change=None)
+        reported = _viewport(st.session_state.get(VIEWPORT_KEY, {}))
+        if reported != st.session_state.get("_drawn_viewport"):
+            st.rerun()
+
+    with probe_slot:
+        _probe_viewport()
 
     # Sidebar: the title, input images, settings and examples. What matters to
     # Streamlit is script order, not where a block draws: the image loading
@@ -705,8 +857,12 @@ if __name__ == "__main__":
         # status label there too. It opens before the VLM call so an enhanced
         # Run is never silent, and carries the whole run in its label. It stays
         # closed while enhancing, when its body would be empty.
-        with result_slot.container(), _canvas(width, height):
-            st.image(_blank_canvas(width, height), width="stretch")
+        with result_slot.container(), _canvas(width, height, viewport):
+            st.image(
+                _blank_canvas(width, height),
+                width="stretch",
+                alt=f"Empty canvas, {width} × {height}",
+            )
             status = st.status(
                 "Enhancing prompt…" if needs_vlm else "Generating image…",
                 expanded=not needs_vlm,
@@ -772,6 +928,7 @@ if __name__ == "__main__":
                 status.update(label="Image generated", state="complete")
                 st.session_state.result_image = image
                 st.session_state.result_seed = used_seed
+                st.session_state.result_prompt = final_prompt
                 # Only on success: the banner sits under the image it made,
                 # never under an older one after a failed run. A retry still
                 # reuses the enhancement from _enhance_cache.
@@ -798,13 +955,22 @@ if __name__ == "__main__":
     with result_slot.container():
         if "result_image" in st.session_state:
             _result = st.session_state.result_image
-            with _canvas(*_result.size):
-                st.image(_result, width="stretch")
+            with _canvas(*_result.size, viewport):
+                st.image(
+                    _result,
+                    width="stretch",
+                    alt=_truncate(st.session_state.get("result_prompt") or "")
+                    or "Generated image",
+                )
                 if st.session_state.result_seed is not None:
                     st.caption(f"Seed: {st.session_state.result_seed}")
         else:
-            with _canvas(width, height):
-                st.image(_blank_canvas(width, height), width="stretch")
+            with _canvas(width, height, viewport):
+                st.image(
+                    _blank_canvas(width, height),
+                    width="stretch",
+                    alt=f"Empty canvas, {width} × {height}",
+                )
                 if image_list:
                     _n = len(image_list)
                     _hint = (
