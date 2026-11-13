@@ -385,7 +385,7 @@ detection. It gates Phase 2's merge alongside the Memory budget.
 
 - **Budget: ≤ 60 s for one 1024² text-to-image Run, warm, upsampling on.** Warm means the models are loaded and the prompt cache has been primed by the load-time warm-up. The budget is the owner's (2026-10-21).
 - **What is timed:** wall clock from the Run submit to the result drawn, which is `_resolve_prompt` plus `infer()`. Take the median of 3 Runs after one discarded warm Run, at fixed seeds.
-- **Edit budget: each edit case ≤ 2× FLUX.2's time on the same case, both as shipped** (decided by the owner 2026-11-12, after Phase 1a measured FLUX.2's own 2-reference edit at ~75 s, over 60 s). An absolute 60 s would ask FLUX 3, at 16 steps, to edit faster than the app does today, and no budget at all would let a multi-minute edit ship undecided. The baseline is `repeat-flux2-0.9.0-2026-11-12` (pipeline already loaded):
+- **Edit budget: each edit case ≤ 2× FLUX.2's time on the same case, both as shipped** (decided by the owner 2026-11-12, after Phase 1a measured FLUX.2's own 2-reference edit at 74.9 s in the repeat run and 78.8 s in the golden run, both over 60 s). An absolute 60 s would ask FLUX 3, at 16 steps, to edit faster than the app does today, and no budget at all would let a multi-minute edit ship undecided. The baseline is `repeat-flux2-0.9.0-2026-11-12` (pipeline already loaded):
 
   | Case | FLUX.2 | Budget (2×) |
   |---|---|---|
@@ -482,14 +482,15 @@ merge and CI. Deviations from the steps below:
   - Warm 1024² text-to-image Run, median of 3: 27.3 s (golden), 28.25 s
     (repeat). Cold first Run with cached weights: 31.0 s. Edit-pipeline
     load: 3.4 s.
-  - Edits: the 2-reference case 7 takes ~75 s (~18 s/step) and the
-    single-reference edits 40–56 s.
+  - Edits, repeat run (the edit-budget baseline): the 2-reference case 7
+    takes 74.9 s (~19 s/step) and the single-reference edits 40.4–56.3 s. The
+    golden run measured 78.8 / 40.4 / 56.3 / 58.5 s for cases 7–10.
   - Peak MLX memory: 17.4 GB text-to-image, 17.2–19.6 GB edit (the repeat run:
     18.6–20.9 GB edit with bit-identical images, so edit peaks vary by run).
   - The golden manifest carries an `amendments` entry. Its revision was
     filled in after the run, and the 426 s cold figure includes the download.
 - **Decided by the owner:** FLUX.2's own 2-reference edit already exceeds
-  60 s (75 s), so edits get their own gate: ≤ 2× FLUX.2 per case (Latency budget).
+  60 s (74.9 s repeat, 78.8 s golden), so edits get their own gate: ≤ 2× FLUX.2 per case (Latency budget).
 
 Goal: put the guards and the measuring stick in place **before anything moves**.
 That means the cache guard hook, the `.gitignore` safety net, and the evaluation
